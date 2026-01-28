@@ -53,6 +53,7 @@ import { CL_SignonReply, CL_ClearState, cl_shownet } from './cl_main.js';
 import { CL_ParseTEnt } from './cl_tent.js';
 import { S_PrecacheSound, S_StartSound, S_StopSound, S_StaticSound } from './snd_dma.js';
 import { CDAudio_Play, CDAudio_Pause, CDAudio_Resume } from './cd_audio.js';
+import { SCR_CenterPrint } from './gl_screen.js';
 
 export const svc_strings = [
 	'svc_bad',
@@ -807,8 +808,7 @@ export function CL_ParseServerMessage() {
 				break;
 
 			case svc_centerprint:
-				// SCR_CenterPrint( MSG_ReadString() );
-				Con_Printf( '[CENTER] %s\n', MSG_ReadString() );
+				SCR_CenterPrint( MSG_ReadString() );
 				break;
 
 			case svc_stufftext:
@@ -966,16 +966,14 @@ export function CL_ParseServerMessage() {
 				cl.intermission = 2;
 				cl.completed_time = cl.time;
 				// vid.recalc_refdef = true; // go to full screen
-				// SCR_CenterPrint( MSG_ReadString() );
-				MSG_ReadString();
+				SCR_CenterPrint( MSG_ReadString() );
 				break;
 
 			case svc_cutscene:
 				cl.intermission = 3;
 				cl.completed_time = cl.time;
 				// vid.recalc_refdef = true; // go to full screen
-				// SCR_CenterPrint( MSG_ReadString() );
-				MSG_ReadString();
+				SCR_CenterPrint( MSG_ReadString() );
 				break;
 
 			case svc_sellscreen:
