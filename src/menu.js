@@ -814,7 +814,12 @@ function M_AdjustSliders( dir ) {
 
 	switch ( m_options_cursor ) {
 
-		case 3: // screen size
+		case 3: // texture filtering
+			Cvar_SetValue( 'gl_texturemode', ! gl_texturemode.value ? 1 : 0 );
+			GL_UpdateTextureFiltering();
+			break;
+
+		case 4: // screen size
 			Cvar_SetValue( 'viewsize', scr_viewsize.value + dir * 10 );
 			if ( scr_viewsize.value < 30 )
 				Cvar_SetValue( 'viewsize', 30 );
@@ -822,7 +827,7 @@ function M_AdjustSliders( dir ) {
 				Cvar_SetValue( 'viewsize', 120 );
 			break;
 
-		case 4: // gamma
+		case 5: // gamma
 			Cvar_SetValue( 'gamma', v_gamma.value - dir * 0.05 );
 			if ( v_gamma.value < 0.5 )
 				Cvar_SetValue( 'gamma', 0.5 );
@@ -830,7 +835,7 @@ function M_AdjustSliders( dir ) {
 				Cvar_SetValue( 'gamma', 1 );
 			break;
 
-		case 5: // mouse speed
+		case 6: // mouse speed
 			Cvar_SetValue( 'sensitivity', sensitivity.value + dir * 0.5 );
 			if ( sensitivity.value < 1 )
 				Cvar_SetValue( 'sensitivity', 1 );
@@ -838,7 +843,7 @@ function M_AdjustSliders( dir ) {
 				Cvar_SetValue( 'sensitivity', 11 );
 			break;
 
-		case 6: // music volume
+		case 7: // music volume
 			Cvar_SetValue( 'bgmvolume', bgmvolume.value + dir * 0.1 );
 			if ( bgmvolume.value < 0 )
 				Cvar_SetValue( 'bgmvolume', 0 );
@@ -846,7 +851,7 @@ function M_AdjustSliders( dir ) {
 				Cvar_SetValue( 'bgmvolume', 1 );
 			break;
 
-		case 7: // sfx volume
+		case 8: // sfx volume
 			Cvar_SetValue( 'volume', volume.value + dir * 0.1 );
 			if ( volume.value < 0 )
 				Cvar_SetValue( 'volume', 0 );
@@ -854,7 +859,7 @@ function M_AdjustSliders( dir ) {
 				Cvar_SetValue( 'volume', 1 );
 			break;
 
-		case 8: // always run
+		case 9: // always run
 			if ( cl_forwardspeed.value > 200 ) {
 
 				Cvar_SetValue( 'cl_forwardspeed', 200 );
@@ -869,21 +874,16 @@ function M_AdjustSliders( dir ) {
 
 			break;
 
-		case 9: // invert mouse
+		case 10: // invert mouse
 			Cvar_SetValue( 'm_pitch', - m_pitch.value );
 			break;
 
-		case 10: // lookspring
+		case 11: // lookspring
 			Cvar_SetValue( 'lookspring', ! lookspring.value ? 1 : 0 );
 			break;
 
-		case 11: // lookstrafe
+		case 12: // lookstrafe
 			Cvar_SetValue( 'lookstrafe', ! lookstrafe.value ? 1 : 0 );
-			break;
-
-		case 13: // texture filtering
-			Cvar_SetValue( 'gl_texturemode', ! gl_texturemode.value ? 1 : 0 );
-			GL_UpdateTextureFiltering();
 			break;
 
 	}
@@ -921,42 +921,42 @@ function M_Options_Draw() {
 	M_Print( 16, 40, '         Go to console' );
 	M_Print( 16, 48, '     Reset to defaults' );
 
-	M_Print( 16, 56, '           Screen size' );
-	let r = ( scr_viewsize.value - 30 ) / ( 120 - 30 );
-	M_DrawSlider( 220, 56, r );
+	M_Print( 16, 56, '    Texture Filtering' );
+	M_DrawCheckbox( 220, 56, gl_texturemode.value );
 
-	M_Print( 16, 64, '            Brightness' );
-	r = ( 1.0 - v_gamma.value ) / 0.5;
+	M_Print( 16, 64, '           Screen size' );
+	let r = ( scr_viewsize.value - 30 ) / ( 120 - 30 );
 	M_DrawSlider( 220, 64, r );
 
-	M_Print( 16, 72, '           Mouse Speed' );
-	r = ( sensitivity.value - 1 ) / 10;
+	M_Print( 16, 72, '            Brightness' );
+	r = ( 1.0 - v_gamma.value ) / 0.5;
 	M_DrawSlider( 220, 72, r );
 
-	M_Print( 16, 80, '       CD Music Volume' );
-	r = bgmvolume.value;
+	M_Print( 16, 80, '           Mouse Speed' );
+	r = ( sensitivity.value - 1 ) / 10;
 	M_DrawSlider( 220, 80, r );
 
-	M_Print( 16, 88, '          Sound Volume' );
-	r = volume.value;
+	M_Print( 16, 88, '       CD Music Volume' );
+	r = bgmvolume.value;
 	M_DrawSlider( 220, 88, r );
 
-	M_Print( 16, 96, '            Always Run' );
-	M_DrawCheckbox( 220, 96, cl_forwardspeed.value > 200 );
+	M_Print( 16, 96, '          Sound Volume' );
+	r = volume.value;
+	M_DrawSlider( 220, 96, r );
 
-	M_Print( 16, 104, '          Invert Mouse' );
-	M_DrawCheckbox( 220, 104, m_pitch.value < 0 );
+	M_Print( 16, 104, '            Always Run' );
+	M_DrawCheckbox( 220, 104, cl_forwardspeed.value > 200 );
 
-	M_Print( 16, 112, '            Lookspring' );
-	M_DrawCheckbox( 220, 112, lookspring.value );
+	M_Print( 16, 112, '          Invert Mouse' );
+	M_DrawCheckbox( 220, 112, m_pitch.value < 0 );
 
-	M_Print( 16, 120, '            Lookstrafe' );
-	M_DrawCheckbox( 220, 120, lookstrafe.value );
+	M_Print( 16, 120, '            Lookspring' );
+	M_DrawCheckbox( 220, 120, lookspring.value );
 
-	M_Print( 16, 128, '    Use old status bar' );
+	M_Print( 16, 128, '            Lookstrafe' );
+	M_DrawCheckbox( 220, 128, lookstrafe.value );
 
-	M_Print( 16, 136, '      Texture Filtering' );
-	M_DrawCheckbox( 220, 136, gl_texturemode.value );
+	M_Print( 16, 136, '    Use old status bar' );
 
 	// cursor
 	M_DrawCharacter( 200, 32 + m_options_cursor * 8, 12 + ( ( Math.floor( _realtime_get() * 4 ) ) & 1 ) );
