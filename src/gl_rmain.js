@@ -453,6 +453,40 @@ export function R_Clear() {
 // R_DrawEntitiesOnList
 //============================================================================
 
+/*
+=================
+R_EntityInPVS
+
+Returns true if the entity is in a visible leaf (PVS check).
+Always returns true if r_novis is set.
+
+NOTE: This checks only the entity's origin point, not its bounding box.
+- OK for alias models (monsters, items) - they're relatively small and centered
+- OK for sprites - they're point-like
+- NOT OK for brush models (doors, platforms) - they span multiple leaves,
+  so brush models skip PVS culling and rely on frustum culling instead
+=================
+*/
+function R_EntityInPVS( ent ) {
+
+	// If r_novis is set, draw everything
+	if ( r_novis.value )
+		return true;
+
+	// Need worldmodel to check PVS
+	if ( ! cl.worldmodel )
+		return true;
+
+	// Find which leaf the entity is in
+	const leaf = Mod_PointInLeaf( ent.origin, cl.worldmodel );
+	if ( ! leaf )
+		return true; // Can't determine, draw it
+
+	// Check if this leaf was marked visible by R_MarkLeaves
+	return leaf.visframe === r_visframecount;
+
+}
+
 export function R_DrawEntitiesOnList() {
 
 	if ( ! r_drawentities.value )
@@ -469,10 +503,15 @@ export function R_DrawEntitiesOnList() {
 		switch ( currententity.model.type ) {
 
 			case mod_alias:
+				// PVS culling for alias models (monsters, items, torches)
+				if ( ! R_EntityInPVS( currententity ) )
+					continue;
 				R_DrawAliasModel( currententity );
 				break;
 
 			case mod_brush:
+				// Skip PVS culling for brush entities (doors, platforms) - they can
+				// span multiple leaves and have their own frustum culling in R_DrawBrushModel
 				R_DrawBrushModel( currententity );
 				break;
 
@@ -489,6 +528,10 @@ export function R_DrawEntitiesOnList() {
 		currententity = cl_visedicts[ i ];
 
 		if ( ! currententity || ! currententity.model )
+			continue;
+
+		// PVS culling for sprites too
+		if ( ! R_EntityInPVS( currententity ) )
 			continue;
 
 		switch ( currententity.model.type ) {

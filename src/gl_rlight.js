@@ -12,6 +12,11 @@ export const MAX_DLIGHTS = 32;
 // Surface flags
 export const SURF_DRAWTILED = 0x20;
 
+// Pre-allocated scratch vectors for RecursiveLightPoint (indexed by recursion depth)
+// BSP trees are typically 20-30 levels deep max
+const _lightMidPool = [];
+for ( let i = 0; i < 32; i ++ ) _lightMidPool[ i ] = new Float32Array( 3 );
+
 export let r_dlightframecount = 0;
 
 /*
@@ -260,7 +265,7 @@ export let lightspot = new Float32Array( 3 );
 RecursiveLightPoint
 =============
 */
-export function RecursiveLightPoint( node, start, end, surfaces ) {
+export function RecursiveLightPoint( node, start, end, surfaces, depth = 0 ) {
 
 	if ( ! node || node.contents < 0 )
 		return - 1; // didn't hit anything
@@ -275,16 +280,17 @@ export function RecursiveLightPoint( node, start, end, surfaces ) {
 	const side = front < 0 ? 1 : 0;
 
 	if ( ( back < 0 ) === ( front < 0 ) )
-		return RecursiveLightPoint( node.children[ side ], start, end, surfaces );
+		return RecursiveLightPoint( node.children[ side ], start, end, surfaces, depth );
 
 	const frac = front / ( front - back );
-	const mid = new Float32Array( 3 );
+	// Use pre-allocated scratch vector from pool (indexed by recursion depth)
+	const mid = _lightMidPool[ depth ];
 	mid[ 0 ] = start[ 0 ] + ( end[ 0 ] - start[ 0 ] ) * frac;
 	mid[ 1 ] = start[ 1 ] + ( end[ 1 ] - start[ 1 ] ) * frac;
 	mid[ 2 ] = start[ 2 ] + ( end[ 2 ] - start[ 2 ] ) * frac;
 
 	// go down front side
-	let r = RecursiveLightPoint( node.children[ side ], start, mid, surfaces );
+	let r = RecursiveLightPoint( node.children[ side ], start, mid, surfaces, depth + 1 );
 	if ( r >= 0 )
 		return r; // hit something
 

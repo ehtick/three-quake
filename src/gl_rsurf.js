@@ -176,6 +176,9 @@ const instanceVisInfo = [];
 // All BatchedMesh objects for the world (one per texture/lightmap combo)
 const worldBatchedMeshes = [];
 
+// Pre-allocated scratch arrays to avoid per-frame allocations
+const _cullBoxMaxs = new Float32Array( 3 ); // for R_CullBox in R_RecursiveWorldNode
+
 // Water/sky mesh tracking: Set-based approach to add/remove from scene
 // without creating/disposing meshes every frame
 let _waterMeshesInScene = new Set();
@@ -190,6 +193,22 @@ const _waterMaterialCache = new Map();
 // during R_DrawBrushModel (equivalent of glPushMatrix/glPopMatrix).
 let currentRenderGroup = null;
 let brushEntityGroups = []; // per-frame brush entity groups to dispose next frame
+
+// Material cache for brush entities - keyed by "diffuseId_lightmapId"
+// Materials are reused across frames to avoid shader recompilation
+const _brushMaterialCache = new Map();
+
+// Track all brush entity groups for disposal on map change
+const _allBrushEntityGroups = new Set();
+
+// Pre-allocated scratch arrays for R_DrawBrushModel (avoid per-call allocations)
+const _brushMins = new Float32Array( 3 );
+const _brushMaxs = new Float32Array( 3 );
+const _brushTemp = new Float32Array( 3 );
+const _brushForward = new Float32Array( 3 );
+const _brushRight = new Float32Array( 3 );
+const _brushUp = new Float32Array( 3 );
+const _brushPlaneNormal = new Float32Array( 3 );
 
 /*
 ================
@@ -1117,10 +1136,14 @@ export function R_BuildLightMap( surf, dest, destOffset, stride ) {
 // R_DrawBrushModel
 //============================================================================
 
+// Euler object reused for brush entity rotation (avoid per-frame allocation)
+const _brushEuler = new THREE.Euler( 0, 0, 0, 'ZYX' );
+
 export function R_DrawBrushModel( e ) {
 
-	const mins = new Float32Array( 3 );
-	const maxs = new Float32Array( 3 );
+	// Use pre-allocated scratch arrays to avoid per-call allocations
+	const mins = _brushMins;
+	const maxs = _brushMaxs;
 	let rotated;
 
 	const clmodel = e.model;
@@ -1147,35 +1170,80 @@ export function R_DrawBrushModel( e ) {
 	if ( R_CullBox( mins, maxs ) )
 		return;
 
-	// clear lightmap polys
-	for ( let i = 0; i < MAX_LIGHTMAPS; i ++ )
-		lightmap_polys[ i ] = null;
+	// Check if we have a cached brush group for this entity
+	let brushGroup = e._brushGroup;
 
-	VectorSubtract( r_refdef.vieworg, e.origin, modelorg );
+	if ( ! brushGroup ) {
 
-	if ( rotated ) {
+		// First time drawing this entity - build and cache the group
+		brushGroup = new THREE.Group();
 
-		const temp = new Float32Array( 3 );
-		const forward = new Float32Array( 3 );
-		const right = new Float32Array( 3 );
-		const up = new Float32Array( 3 );
+		// Build meshes for all non-sky/water surfaces
+		if ( clmodel.surfaces && clmodel.nummodelsurfaces ) {
 
-		VectorCopy( modelorg, temp );
-		AngleVectors( e.angles, forward, right, up );
-		modelorg[ 0 ] = DotProduct( temp, forward );
-		modelorg[ 1 ] = - DotProduct( temp, right );
-		modelorg[ 2 ] = DotProduct( temp, up );
+			const startSurf = clmodel.firstmodelsurface;
+			for ( let i = 0; i < clmodel.nummodelsurfaces; i ++ ) {
+
+				const psurf = clmodel.surfaces[ startSurf + i ];
+				if ( ! psurf ) continue;
+				if ( psurf.flags & ( SURF_DRAWSKY | SURF_DRAWTURB ) ) continue;
+				if ( ! psurf.polys ) continue;
+
+				// Get plane normal, flip if SURF_PLANEBACK
+				let planeNormal = null;
+				if ( psurf.plane ) {
+
+					const pn = psurf.plane.normal;
+					if ( psurf.flags & SURF_PLANEBACK ) {
+
+						// Create a new array for the cached geometry (not scratch)
+						planeNormal = new Float32Array( [ - pn[ 0 ], - pn[ 1 ], - pn[ 2 ] ] );
+
+					} else {
+
+						planeNormal = pn;
+
+					}
+
+				}
+
+				const geom = DrawGLPoly( psurf.polys, planeNormal );
+				if ( ! geom ) continue;
+
+				const t = R_TextureAnimation( psurf.texinfo.texture );
+				const diffuse = ( t && t.gl_texture ) ? t.gl_texture : null;
+				const lmTex = lightmapTextures[ psurf.lightmaptexturenum ];
+
+				// Use cached material to avoid shader recompilation
+				const diffuseId = diffuse ? diffuse.id : 0;
+				const lmId = lmTex ? lmTex.id : 0;
+				const matKey = `${diffuseId}_${lmId}`;
+				let material = _brushMaterialCache.get( matKey );
+				if ( ! material ) {
+
+					material = ( diffuse && lmTex )
+						? createQuakeLightmapMaterial( diffuse, lmTex )
+						: new THREE.MeshBasicMaterial( { map: diffuse } );
+					_brushMaterialCache.set( matKey, material );
+
+				}
+
+				const mesh = new THREE.Mesh( geom, material );
+				brushGroup.add( mesh );
+
+			}
+
+		}
+
+		// Cache on entity and track for disposal on map change
+		e._brushGroup = brushGroup;
+		_allBrushEntityGroups.add( brushGroup );
 
 	}
 
-	// Create a Three.js group for this brush entity with its transform applied.
-	// This is the equivalent of glPushMatrix + R_RotateForEntity in the C code.
-	const brushGroup = new THREE.Group();
-
-	// Apply entity origin (Quake coordinates — same as world geometry)
+	// Update transform (position/rotation may change each frame for doors, etc.)
 	brushGroup.position.set( e.origin[ 0 ], e.origin[ 1 ], e.origin[ 2 ] );
 
-	// Apply entity angles if rotated (e.g. rotating doors)
 	if ( rotated ) {
 
 		// "stupid quake bug" — negate pitch before R_RotateForEntity
@@ -1183,103 +1251,21 @@ export function R_DrawBrushModel( e ) {
 		const yaw = e.angles[ 1 ];
 		const roll = e.angles[ 2 ];
 
-		// R_RotateForEntity order: yaw around Z, -pitch around Y, roll around X
-		// Apply in reverse order for Three.js (which composes in XYZ order)
-		const euler = new THREE.Euler(
+		_brushEuler.set(
 			roll * ( Math.PI / 180 ),
 			- pitch * ( Math.PI / 180 ),
-			yaw * ( Math.PI / 180 ),
-			'ZYX'
+			yaw * ( Math.PI / 180 )
 		);
-		brushGroup.quaternion.setFromEuler( euler );
+		brushGroup.quaternion.setFromEuler( _brushEuler );
+
+	} else {
+
+		brushGroup.quaternion.identity();
 
 	}
 
-	// Swap render target so surface renderers add meshes to this group
-	const savedRenderGroup = currentRenderGroup;
-	currentRenderGroup = brushGroup;
-
-	// draw surfaces
-	if ( clmodel.surfaces && clmodel.nummodelsurfaces ) {
-
-		const startSurf = clmodel.firstmodelsurface;
-		for ( let i = 0; i < clmodel.nummodelsurfaces; i ++ ) {
-
-			const psurf = clmodel.surfaces[ startSurf + i ];
-			if ( ! psurf ) continue;
-
-			// find which side of the node we are on
-			const pplane = psurf.plane;
-			const dot = DotProduct( modelorg, pplane.normal ) - pplane.dist;
-
-			// draw the polygon
-			if ( ( ( psurf.flags & SURF_PLANEBACK ) && ( dot < - BACKFACE_EPSILON ) ) ||
-				( ! ( psurf.flags & SURF_PLANEBACK ) && ( dot > BACKFACE_EPSILON ) ) ) {
-
-				if ( gl_texsort.value )
-					R_RenderBrushPoly( psurf );
-				else
-					R_DrawSequentialPoly( psurf );
-
-			}
-
-		}
-
-	}
-
-	R_BlendLightmaps();
-
-	// Restore render target and add the brush entity group to the scene
-	currentRenderGroup = savedRenderGroup;
-
-	// Build meshes for the brush entity surfaces (lightmapped polys)
-	// R_RenderBrushPoly only chains polys to lightmap_polys; actual mesh creation
-	// happens here, similar to R_BuildWorldMeshes but for this entity's surfaces.
-	if ( clmodel.surfaces && clmodel.nummodelsurfaces ) {
-
-		const startSurf = clmodel.firstmodelsurface;
-		for ( let i = 0; i < clmodel.nummodelsurfaces; i ++ ) {
-
-			const psurf = clmodel.surfaces[ startSurf + i ];
-			if ( ! psurf ) continue;
-			if ( psurf.flags & ( SURF_DRAWSKY | SURF_DRAWTURB ) ) continue;
-			if ( ! psurf.polys ) continue;
-
-			// Get plane normal, flip if SURF_PLANEBACK
-			let planeNormal = null;
-			if ( psurf.plane ) {
-
-				const pn = psurf.plane.normal;
-				if ( psurf.flags & SURF_PLANEBACK ) {
-
-					planeNormal = new Float32Array( [ - pn[ 0 ], - pn[ 1 ], - pn[ 2 ] ] );
-
-				} else {
-
-					planeNormal = pn;
-
-				}
-
-			}
-
-			const geom = DrawGLPoly( psurf.polys, planeNormal );
-			if ( ! geom ) continue;
-
-			const t = R_TextureAnimation( psurf.texinfo.texture );
-			const diffuse = ( t && t.gl_texture ) ? t.gl_texture : null;
-			const lmTex = lightmapTextures[ psurf.lightmaptexturenum ];
-			const material = ( diffuse && lmTex )
-				? createQuakeLightmapMaterial( diffuse, lmTex )
-				: new THREE.MeshBasicMaterial( { map: diffuse } );
-
-			const mesh = new THREE.Mesh( geom, material );
-			brushGroup.add( mesh );
-
-		}
-
-	}
-
-	if ( scene ) scene.add( brushGroup );
+	// Add to scene (will be removed next frame by R_DrawWorld cleanup)
+	if ( scene && ! brushGroup.parent ) scene.add( brushGroup );
 	brushEntityGroups.push( brushGroup );
 
 }
@@ -1298,7 +1284,11 @@ export function R_RecursiveWorldNode( node ) {
 	if ( node.visframe !== r_visframecount )
 		return;
 
-	if ( R_CullBox( node.minmaxs, new Float32Array( [ node.minmaxs[ 3 ], node.minmaxs[ 4 ], node.minmaxs[ 5 ] ] ) ) )
+	// Use pre-allocated scratch array for maxs to avoid per-call allocation
+	_cullBoxMaxs[ 0 ] = node.minmaxs[ 3 ];
+	_cullBoxMaxs[ 1 ] = node.minmaxs[ 4 ];
+	_cullBoxMaxs[ 2 ] = node.minmaxs[ 5 ];
+	if ( R_CullBox( node.minmaxs, _cullBoxMaxs ) )
 		return;
 
 	// if a leaf node, draw stuff
@@ -1450,20 +1440,10 @@ export function R_DrawWorld() {
 	// Begin new water/sky frame: clear "this frame" set
 	_waterMeshesThisFrame = new Set();
 
-	// remove and dispose brush entity groups from previous frame
+	// Remove brush entity groups from scene (don't dispose - they're cached on entities)
 	for ( let i = 0; i < brushEntityGroups.length; i ++ ) {
 
 		const group = brushEntityGroups[ i ];
-		// dispose all children (meshes) in the group
-		while ( group.children.length > 0 ) {
-
-			const child = group.children[ 0 ];
-			group.remove( child );
-			if ( child.geometry ) child.geometry.dispose();
-			if ( child.material ) child.material.dispose();
-
-		}
-
 		if ( group.parent ) group.parent.remove( group );
 
 	}
@@ -2386,6 +2366,24 @@ export function GL_BuildLightmaps() {
 	_waterMeshesInScene = new Set();
 	_waterMeshesThisFrame = new Set();
 	_waterMaterialCache.clear();
+
+	// Clear brush entity material cache (dispose old materials first)
+	for ( const mat of _brushMaterialCache.values() ) mat.dispose();
+	_brushMaterialCache.clear();
+
+	// Dispose all cached brush entity groups (geometry disposal)
+	for ( const group of _allBrushEntityGroups ) {
+
+		if ( group.parent ) group.parent.remove( group );
+		for ( const child of group.children ) {
+
+			if ( child.geometry ) child.geometry.dispose();
+
+		}
+
+	}
+
+	_allBrushEntityGroups.clear();
 
 	// Reset sky materials so they pick up new sky textures
 	if ( solidSkyMaterial ) { solidSkyMaterial.dispose(); solidSkyMaterial = null; }

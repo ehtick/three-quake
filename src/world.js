@@ -24,6 +24,11 @@ import {
 import { PR_ExecuteProgram } from './pr_exec.js';
 import { EDICT_TO_PROG, pr_global_struct } from './progs.js';
 
+// Pre-allocated scratch vectors for SV_RecursiveHullCheck (indexed by recursion depth)
+// BSP hull trees are typically 20-30 levels deep max
+const _hullMidPool = [];
+for ( let i = 0; i < 32; i ++ ) _hullMidPool[ i ] = new Float32Array( 3 );
+
 //============================================================================
 // world.h types
 //============================================================================
@@ -655,7 +660,7 @@ const DIST_EPSILON = 0.03125;
 SV_RecursiveHullCheck
 ==================
 */
-export function SV_RecursiveHullCheck( hull, num, p1f, p2f, p1, p2, trace ) {
+export function SV_RecursiveHullCheck( hull, num, p1f, p2f, p1, p2, trace, depth = 0 ) {
 
 	// check for empty
 	if ( num < 0 ) {
@@ -701,9 +706,9 @@ export function SV_RecursiveHullCheck( hull, num, p1f, p2f, p1, p2, trace ) {
 	}
 
 	if ( t1 >= 0 && t2 >= 0 )
-		return SV_RecursiveHullCheck( hull, node.children[ 0 ], p1f, p2f, p1, p2, trace );
+		return SV_RecursiveHullCheck( hull, node.children[ 0 ], p1f, p2f, p1, p2, trace, depth );
 	if ( t1 < 0 && t2 < 0 )
-		return SV_RecursiveHullCheck( hull, node.children[ 1 ], p1f, p2f, p1, p2, trace );
+		return SV_RecursiveHullCheck( hull, node.children[ 1 ], p1f, p2f, p1, p2, trace, depth );
 
 	// put the crosspoint DIST_EPSILON pixels on the near side
 	let frac;
@@ -717,19 +722,21 @@ export function SV_RecursiveHullCheck( hull, num, p1f, p2f, p1, p2, trace ) {
 		frac = 1;
 
 	let midf = p1f + ( p2f - p1f ) * frac;
-	const mid = new Float32Array( 3 );
-	for ( let i = 0; i < 3; i ++ )
-		mid[ i ] = p1[ i ] + frac * ( p2[ i ] - p1[ i ] );
+	// Use pre-allocated scratch vector from pool (indexed by recursion depth)
+	const mid = _hullMidPool[ depth ];
+	mid[ 0 ] = p1[ 0 ] + frac * ( p2[ 0 ] - p1[ 0 ] );
+	mid[ 1 ] = p1[ 1 ] + frac * ( p2[ 1 ] - p1[ 1 ] );
+	mid[ 2 ] = p1[ 2 ] + frac * ( p2[ 2 ] - p1[ 2 ] );
 
 	const side = ( t1 < 0 ) ? 1 : 0;
 
 	// move up to the node
-	if ( ! SV_RecursiveHullCheck( hull, node.children[ side ], p1f, midf, p1, mid, trace ) )
+	if ( ! SV_RecursiveHullCheck( hull, node.children[ side ], p1f, midf, p1, mid, trace, depth + 1 ) )
 		return false;
 
 	if ( SV_HullPointContents( hull, node.children[ side ^ 1 ], mid ) !== CONTENTS_SOLID )
 		// go past the node
-		return SV_RecursiveHullCheck( hull, node.children[ side ^ 1 ], midf, p2f, mid, p2, trace );
+		return SV_RecursiveHullCheck( hull, node.children[ side ^ 1 ], midf, p2f, mid, p2, trace, depth + 1 );
 
 	if ( trace.allsolid )
 		return false; // never got out of the solid area
