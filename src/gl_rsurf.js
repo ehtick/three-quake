@@ -1171,7 +1171,23 @@ export function R_DrawBrushModel( e ) {
 		return;
 
 	// Check if we have a cached brush group for this entity
+	// Invalidate cache if entity.frame changed (for texture animation, e.g. buttons)
 	let brushGroup = e._brushGroup;
+	if ( brushGroup && e._brushGroupFrame !== e.frame ) {
+
+		// Frame changed - dispose old group and rebuild
+		_allBrushEntityGroups.delete( brushGroup );
+		if ( brushGroup.parent ) brushGroup.parent.remove( brushGroup );
+		for ( const child of brushGroup.children ) {
+
+			if ( child.geometry ) child.geometry.dispose();
+			// Don't dispose materials - they're cached in _brushMaterialCache
+
+		}
+		brushGroup = null;
+		e._brushGroup = null;
+
+	}
 
 	if ( ! brushGroup ) {
 
@@ -1237,6 +1253,7 @@ export function R_DrawBrushModel( e ) {
 
 		// Cache on entity and track for disposal on map change
 		e._brushGroup = brushGroup;
+		e._brushGroupFrame = e.frame; // Track frame for texture animation invalidation
 		_allBrushEntityGroups.add( brushGroup );
 
 	}
