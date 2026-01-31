@@ -20,6 +20,7 @@ import {
 	svc_print, svc_serverinfo, svc_cdtrack, svc_setview, svc_signonnum,
 	svc_time, svc_particle, svc_sound, svc_clientdata, svc_updatefrags,
 	svc_stufftext, svc_nop, svc_spawnbaseline, svc_disconnect,
+	svc_updatename, svc_updatecolors,
 	U_MOREBITS, U_ORIGIN1, U_ORIGIN2, U_ORIGIN3,
 	U_ANGLE1, U_ANGLE2, U_ANGLE3,
 	U_NOLERP, U_FRAME, U_SIGNAL, U_MODEL, U_COLORMAP, U_SKIN, U_EFFECTS, U_LONGENTITY,
@@ -957,8 +958,11 @@ if (crash = true), don't bother sending signoffs
 export function SV_DropClient( crash ) {
 
 	const client = host_client;
-	if ( ! client )
+	if ( client == null )
 		return;
+
+	// Get the client index for notifications
+	const clientnum = svs.clients.indexOf( client );
 
 	if ( ! crash ) {
 
@@ -970,20 +974,57 @@ export function SV_DropClient( crash ) {
 
 		}
 
+		if ( client.edict != null && client.spawned ) {
+
+			// call the prog function for removing a client
+			// this will set the body to a dead frame, among other things
+			const saveSelf = pr_global_struct.self;
+			pr_global_struct.self = EDICT_TO_PROG( client.edict );
+			PR_ExecuteProgram( pr_global_struct.ClientDisconnect );
+			pr_global_struct.self = saveSelf;
+
+		}
+
+		Con_Printf( 'Client ' + client.name + ' removed\n' );
+
 	}
 
-	if ( client.netconnection ) {
+	// break the net connection
+	if ( client.netconnection != null ) {
 
 		NET_Close( client.netconnection );
 		client.netconnection = null;
 
 	}
 
+	// free the client (the body stays around)
 	client.active = false;
 	client.name = '';
+	client.old_frags = - 999999;
 	client.spawned = false;
 
 	set_net_activeconnections( net_activeconnections - 1 );
+
+	// send notification to all clients
+	for ( let i = 0; i < svs.maxclients; i ++ ) {
+
+		const other = svs.clients[ i ];
+		if ( ! other.active )
+			continue;
+
+		MSG_WriteByte( other.message, svc_updatename );
+		MSG_WriteByte( other.message, clientnum );
+		MSG_WriteString( other.message, '' );
+
+		MSG_WriteByte( other.message, svc_updatefrags );
+		MSG_WriteByte( other.message, clientnum );
+		MSG_WriteShort( other.message, 0 );
+
+		MSG_WriteByte( other.message, svc_updatecolors );
+		MSG_WriteByte( other.message, clientnum );
+		MSG_WriteByte( other.message, 0 );
+
+	}
 
 }
 

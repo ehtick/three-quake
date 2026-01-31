@@ -64,7 +64,52 @@ export function WT_Init() {
 
 	wt_initialized = true;
 	Con_Printf( 'WebTransport driver initialized\n' );
+
+	// Send clean disconnect when page unloads (browser only)
+	if ( typeof window !== 'undefined' ) {
+
+		window.addEventListener( 'pagehide', _onPageHide );
+		window.addEventListener( 'beforeunload', _onPageHide );
+
+	}
+
 	return 0;
+
+}
+
+/**
+ * Handle page unload - send clean disconnect to server
+ */
+function _onPageHide() {
+
+	for ( const [ sock, conn ] of wt_connections ) {
+
+		try {
+
+			// Send clc_disconnect message before closing
+			if ( conn.reliableWriter != null ) {
+
+				const msg = new Uint8Array( 4 );
+				msg[ 0 ] = 1; // frame type: game message
+				msg[ 1 ] = 1; // length low byte
+				msg[ 2 ] = 0; // length high byte
+				msg[ 3 ] = 2; // clc_disconnect
+				conn.reliableWriter.write( msg );
+
+			}
+
+			// Close the transport (sends QUIC CONNECTION_CLOSE)
+			conn.transport.close();
+
+		} catch ( e ) {
+
+			// Ignore errors during shutdown
+
+		}
+
+	}
+
+	wt_connections.clear();
 
 }
 

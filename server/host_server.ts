@@ -126,6 +126,28 @@ interface NetDriver {
 const net_drivers: NetDriver[] = [];
 let net_numdrivers = 0;
 
+// Protocol constants for disconnect notifications
+const svc_updatename = 13;
+const svc_updatefrags = 14;
+const svc_updatecolors = 17;
+
+// Message writing helpers
+function MSG_WriteByte(msg: { data: Uint8Array; cursize: number }, val: number): void {
+	msg.data[msg.cursize++] = val & 0xff;
+}
+
+function MSG_WriteShort(msg: { data: Uint8Array; cursize: number }, val: number): void {
+	msg.data[msg.cursize++] = val & 0xff;
+	msg.data[msg.cursize++] = (val >> 8) & 0xff;
+}
+
+function MSG_WriteString(msg: { data: Uint8Array; cursize: number }, s: string): void {
+	for (let i = 0; i < s.length; i++) {
+		msg.data[msg.cursize++] = s.charCodeAt(i);
+	}
+	msg.data[msg.cursize++] = 0; // null terminator
+}
+
 /**
  * Initialize the server-side network
  */
@@ -207,12 +229,11 @@ export async function Host_Init_Server(config: ServerConfig): Promise<void> {
 export function Host_Shutdown_Server(): void {
 	Sys_Printf('Host_Shutdown_Server...\n');
 
-	// Drop all clients
-	for (const client of svs.clients) {
-		if (client.active && client.netconnection) {
-			net_drivers[0].Close(client.netconnection);
-			client.netconnection = null;
-			client.active = false;
+	// Drop all clients (crash=true since server is going down)
+	for (let i = 0; i < svs.clients.length; i++) {
+		const client = svs.clients[i];
+		if (client.active) {
+			SV_DropClient(i, true);
 		}
 	}
 
@@ -264,6 +285,51 @@ function SV_CheckForNewClients(): void {
 }
 
 /**
+ * Drop a client - called when client disconnects or is kicked
+ * @param clientNum The client slot number
+ * @param crash If true, don't bother sending signoff messages
+ */
+function SV_DropClient(clientNum: number, crash: boolean): void {
+	const client = svs.clients[clientNum];
+	if (client == null || !client.active) return;
+
+	if (!crash) {
+		Sys_Printf('Client %s removed\n', client.name);
+	}
+
+	// Close the net connection
+	if (client.netconnection != null) {
+		net_drivers[0].Close(client.netconnection);
+		client.netconnection = null;
+	}
+
+	// Free the client (the body stays around)
+	client.active = false;
+	client.name = '';
+	client.old_frags = -999999;
+	client.spawned = false;
+	client.dropasap = false;
+
+	// Send notification to all other clients
+	for (let i = 0; i < svs.maxclients; i++) {
+		const other = svs.clients[i];
+		if (!other.active) continue;
+
+		MSG_WriteByte(other.message, svc_updatename);
+		MSG_WriteByte(other.message, clientNum);
+		MSG_WriteString(other.message, '');
+
+		MSG_WriteByte(other.message, svc_updatefrags);
+		MSG_WriteByte(other.message, clientNum);
+		MSG_WriteShort(other.message, 0);
+
+		MSG_WriteByte(other.message, svc_updatecolors);
+		MSG_WriteByte(other.message, clientNum);
+		MSG_WriteByte(other.message, 0);
+	}
+}
+
+/**
  * Read and process client messages
  */
 function SV_RunClients(): void {
@@ -273,7 +339,7 @@ function SV_RunClients(): void {
 
 		host_client = client;
 
-		if (!client.netconnection) continue;
+		if (client.netconnection == null) continue;
 
 		// Read messages from client
 		let ret: number;
@@ -285,13 +351,7 @@ function SV_RunClients(): void {
 
 		if (ret === -1) {
 			// Client disconnected
-			Sys_Printf('Client %d disconnected\n', i);
-			if (client.netconnection) {
-				net_drivers[0].Close(client.netconnection);
-			}
-			client.netconnection = null;
-			client.active = false;
-			client.spawned = false;
+			SV_DropClient(i, false);
 		}
 	}
 
@@ -331,13 +391,8 @@ function SV_SendClientMessages(): void {
 	// Drop clients marked for dropping
 	for (let i = 0; i < svs.maxclients; i++) {
 		const client = svs.clients[i];
-		if (client.dropasap && client.netconnection) {
-			net_drivers[0].Close(client.netconnection);
-			client.netconnection = null;
-			client.active = false;
-			client.spawned = false;
-			client.dropasap = false;
-			Sys_Printf('Client %d dropped\n', i);
+		if (client.dropasap) {
+			SV_DropClient(i, false);
 		}
 	}
 }
