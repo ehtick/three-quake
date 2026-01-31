@@ -3,6 +3,7 @@
 import { Sys_Error } from './sys.js';
 import { Con_Printf, Con_DPrintf, COM_Parse, com_token } from './common.js';
 import { PR_InitBuiltins } from './pr_cmds.js';
+import { CRC_Init, CRC_ProcessByte, CRC_Value } from './crc.js';
 import { VectorCopy, vec3_origin } from './mathlib.js';
 import { MAX_EDICTS } from './quakedef.js';
 import {
@@ -1047,10 +1048,15 @@ export function PR_LoadProgs( fileData ) {
 	const dataView = new DataView( fileData );
 	const byteView = new Uint8Array( fileData );
 
-	// CRC computation
-	// TODO: implement CRC_Init / CRC_ProcessByte when crc.js is available
-	// For now skip CRC validation
-	PR_SetCRC( 0 );
+	// CRC computation - compute CRC over entire progs.dat file
+	let crc = CRC_Init();
+	for ( let i = 0; i < byteView.length; i ++ ) {
+
+		crc = CRC_ProcessByte( crc, byteView[ i ] );
+
+	}
+
+	PR_SetCRC( CRC_Value( crc ) );
 
 	// Parse header (dprograms_t) - all fields are int32 little-endian
 	const header = new dprograms_t();

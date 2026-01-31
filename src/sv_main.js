@@ -4,7 +4,8 @@ import { Sys_Error } from './sys.js';
 import {
 	Con_Printf, Con_DPrintf, SZ_Clear, SZ_Write, SZ_Alloc,
 	MSG_WriteByte, MSG_WriteChar, MSG_WriteShort, MSG_WriteLong,
-	MSG_WriteFloat, MSG_WriteString, MSG_WriteCoord, MSG_WriteAngle
+	MSG_WriteFloat, MSG_WriteString, MSG_WriteCoord, MSG_WriteAngle,
+	standard_quake
 } from './common.js';
 import { Cmd_AddCommand, Cmd_ExecuteString, Cbuf_AddText, Cbuf_InsertText, src_command } from './cmd.js';
 import { cvar_t, Cvar_RegisterVariable, Cvar_Set, Cvar_SetValue } from './cvar.js';
@@ -47,14 +48,14 @@ import {
 import { net_activeconnections, set_net_activeconnections } from './net.js';
 import { host_frametime, set_host_frametime, realtime } from './host.js';
 import { COM_LoadFile } from './pak.js';
-import { VectorCopy, VectorAdd, VectorSubtract } from './mathlib.js';
-import { Mod_ForName } from './gl_model.js';
+import { VectorCopy, VectorAdd, VectorSubtract, DotProduct } from './mathlib.js';
+import { Mod_ForName, Mod_LeafPVS } from './gl_model.js';
 import { PR_LoadProgs, PR_AllocEdicts, ED_ClearEdict, ED_LoadFromFile, PR_SetCurrentSkill } from './pr_edict.js';
-import { pr_global_struct, pr_strings, pr_edict_size, progs, EDICT_NUM, PR_SetSV, EDICT_TO_PROG, PROG_TO_EDICT, NEXT_EDICT, PR_GetString } from './progs.js';
+import { pr_global_struct, pr_strings, pr_edict_size, progs, pr_crc, EDICT_NUM, PR_SetSV, EDICT_TO_PROG, PROG_TO_EDICT, NEXT_EDICT, PR_GetString } from './progs.js';
 import { SV_ClearWorld, SV_Move, SV_TestEntityPosition, SV_LinkEdict, SV_PointContents } from './world.js';
 import { SV_Physics, SV_SetState, SV_SetCallbacks } from './sv_phys.js';
 import { PR_ExecuteProgram } from './pr_exec.js';
-import { SV_User_SetCallbacks } from './sv_user.js';
+import { SV_User_SetCallbacks, SV_SetIdealPitch } from './sv_user.js';
 import { V_CalcRoll } from './view.js';
 import { key_dest } from './keys.js';
 
@@ -65,6 +66,14 @@ import { key_dest } from './keys.js';
 const localmodels = new Array( MAX_MODELS );
 for ( let i = 0; i < MAX_MODELS; i ++ )
 	localmodels[ i ] = '*' + i;
+
+// PVS culling state (from WinQuake/sv_main.c)
+// The PVS must include a small area around the client to allow head bobbing
+// or other small motion on the client side.
+const CONTENTS_SOLID = - 2;
+const MAX_MAP_LEAFS = 8192;
+let fatbytes = 0;
+const fatpvs = new Uint8Array( MAX_MAP_LEAFS / 8 );
 
 // Physics cvars (extern in C)
 export const sv_maxvelocity = new cvar_t( 'sv_maxvelocity', '2000' );
@@ -241,7 +250,7 @@ This will be sent on the initial connection and upon each server load.
 export function SV_SendServerinfo( client ) {
 
 	MSG_WriteByte( client.message, svc_print );
-	const message = '\x02\nVERSION 1.09 SERVER (0 CRC)';
+	const message = '\x02\nVERSION 1.09 SERVER (' + pr_crc + ' CRC)';
 	MSG_WriteString( client.message, message );
 
 	MSG_WriteByte( client.message, svc_serverinfo );
@@ -297,6 +306,7 @@ export function SV_ConnectClient( clientnum ) {
 
 	const client = svs.clients[ clientnum ];
 
+	console.log( '[MP] SV_ConnectClient: slot', clientnum, 'entity', clientnum + 1 );
 	Con_DPrintf( 'Client ' + client.netconnection.address + ' connected\n' );
 
 	const edictnum = clientnum + 1;
@@ -356,15 +366,13 @@ export function SV_CheckForNewClients() {
 	while ( true ) {
 
 		const ret = NET_CheckNewConnections();
-		if ( ! ret )
+		if ( ret == null )
 			break;
 
-		console.log( 'SV_CheckForNewClients: got connection, searching for free client. maxclients=' + svs.maxclients );
 		// init a new client structure
 		let i;
 		for ( i = 0; i < svs.maxclients; i ++ ) {
 
-			console.log( '  client ' + i + ' active=' + svs.clients[ i ].active );
 			if ( ! svs.clients[ i ].active )
 				break;
 
@@ -398,6 +406,7 @@ SV_ClearDatagram
 export function SV_ClearDatagram() {
 
 	SZ_Clear( sv.datagram );
+	sv.datagram.overflowed = false;
 
 }
 
@@ -451,11 +460,8 @@ export function SV_SendClientMessages() {
 
 		if ( client.message.cursize || client.dropasap ) {
 
-			if ( ! NET_CanSendMessage( client.netconnection ) ) {
-
+			if ( ! NET_CanSendMessage( client.netconnection ) )
 				continue;
-
-			}
 
 			if ( client.dropasap ) {
 
@@ -521,6 +527,80 @@ function SV_UpdateToReliableMessages() {
 	}
 
 	SZ_Clear( sv.reliable_datagram );
+	sv.reliable_datagram.overflowed = false;
+
+}
+
+/*
+=============================================================================
+
+The PVS must include a small area around the client to allow head bobbing
+or other small motion on the client side. Otherwise, a bob might cause an
+entity that should be visible to not show up, especially when the bob
+crosses a waterline.
+
+=============================================================================
+*/
+
+/*
+=============
+SV_AddToFatPVS
+
+Recursively accumulates PVS bits from leafs within 8 units of the point.
+=============
+*/
+function SV_AddToFatPVS( org, node ) {
+
+	while ( true ) {
+
+		// if this is a leaf, accumulate the pvs bits
+		if ( node.contents < 0 ) {
+
+			if ( node.contents !== CONTENTS_SOLID ) {
+
+				const pvs = Mod_LeafPVS( node, sv.worldmodel );
+				for ( let i = 0; i < fatbytes; i ++ )
+					fatpvs[ i ] |= pvs[ i ];
+
+			}
+
+			return;
+
+		}
+
+		const plane = node.plane;
+		const d = DotProduct( org, plane.normal ) - plane.dist;
+
+		if ( d > 8 )
+			node = node.children[ 0 ];
+		else if ( d < - 8 )
+			node = node.children[ 1 ];
+		else {
+
+			// go down both sides
+			SV_AddToFatPVS( org, node.children[ 0 ] );
+			node = node.children[ 1 ];
+
+		}
+
+	}
+
+}
+
+/*
+=============
+SV_FatPVS
+
+Calculates a PVS that is the inclusive or of all leafs within 8 pixels of the
+given point.
+=============
+*/
+function SV_FatPVS( org ) {
+
+	fatbytes = ( sv.worldmodel.numleafs + 31 ) >> 3;
+	fatpvs.fill( 0, 0, fatbytes );
+	SV_AddToFatPVS( org, sv.worldmodel.nodes[ 0 ] );
+	return fatpvs;
 
 }
 
@@ -531,19 +611,38 @@ SV_WriteEntitiesToClient
 */
 function SV_WriteEntitiesToClient( clent, msg ) {
 
-	// TODO: SV_FatPVS for visibility culling — for now send all entities
+	// find the client's PVS
+	const org = new Float32Array( 3 );
+	VectorAdd( clent.v.origin, clent.v.view_ofs, org );
+	const pvs = SV_FatPVS( org );
 
 	// send over all entities (except the client) that touch the pvs
 	let ent = NEXT_EDICT( sv.edicts[ 0 ] );
 	for ( let e = 1; e < sv.num_edicts; e ++, ent = NEXT_EDICT( ent ) ) {
 
 		// ignore ents without visible models (unless it's the client itself)
+		// clent is ALWAYS sent
 		if ( ent !== clent ) {
 
-			if ( ! ent.v.modelindex || ! ent.v.model )
+			// Check modelindex and that model string is not empty
+			// Original C: !ent->v.modelindex || !pr_strings[ent->v.model]
+			// IMPORTANT: Use explicit checks per CLAUDE.md rules
+			if ( ent.v.modelindex === 0 || PR_GetString( ent.v.model ) === '' )
 				continue;
 
-			// TODO: PVS check — skip entities not in client's PVS
+			// PVS check — skip entities not in client's PVS
+			// Check if any of the entity's leafs are visible
+			let i;
+			for ( i = 0; i < ent.num_leafs; i ++ ) {
+
+				const leafnum = ent.leafnums[ i ];
+				if ( pvs[ leafnum >> 3 ] & ( 1 << ( leafnum & 7 ) ) )
+					break; // found a visible leaf
+
+			}
+
+			if ( i === ent.num_leafs )
+				continue; // not visible
 
 		}
 
@@ -664,10 +763,10 @@ export function SV_WriteClientdataToMessage( ent, msg ) {
 	//
 	// send the current viewpos offset from the view entity
 	//
-	// SV_SetIdealPitch() -- TODO
+	SV_SetIdealPitch();
 
 	// a fixangle might get lost in a dropped packet. Oh well.
-	if ( ent.v.fixangle ) {
+	if ( ent.v.fixangle !== 0 ) {
 
 		MSG_WriteByte( msg, svc_setangle );
 		for ( let i = 0; i < 3; i ++ )
@@ -681,7 +780,7 @@ export function SV_WriteClientdataToMessage( ent, msg ) {
 	if ( ent.v.view_ofs[ 2 ] !== DEFAULT_VIEWHEIGHT )
 		bits |= SU_VIEWHEIGHT;
 
-	if ( ent.v.idealpitch )
+	if ( ent.v.idealpitch !== 0 )
 		bits |= SU_IDEALPITCH;
 
 	// stuff the sigil bits into the high bits of items for sbar
@@ -749,8 +848,25 @@ export function SV_WriteClientdataToMessage( ent, msg ) {
 	MSG_WriteByte( msg, ent.v.ammo_rockets );
 	MSG_WriteByte( msg, ent.v.ammo_cells );
 
-	// standard quake
-	MSG_WriteByte( msg, ent.v.weapon );
+	if ( standard_quake ) {
+
+		MSG_WriteByte( msg, ent.v.weapon );
+
+	} else {
+
+		// Mission pack (Rogue/Hipnotic): send weapon as bit index
+		for ( let i = 0; i < 32; i ++ ) {
+
+			if ( ( ent.v.weapon | 0 ) & ( 1 << i ) ) {
+
+				MSG_WriteByte( msg, i );
+				break;
+
+			}
+
+		}
+
+	}
 
 }
 
@@ -773,6 +889,9 @@ function SV_SendClientDatagram( client ) {
 	// copy the server datagram if there is space
 	if ( msg.cursize + sv.datagram.cursize < msg.maxsize )
 		SZ_Write( msg, sv.datagram.data, sv.datagram.cursize );
+
+	// Debug: log datagram being sent
+	// console.log( 'SV_SendClientDatagram: sending ' + msg.cursize + ' bytes to client' );
 
 	// send the datagram
 	if ( NET_SendUnreliableMessage( client.netconnection, msg ) === - 1 ) {
@@ -1083,10 +1202,12 @@ export function SV_SpawnServer( server ) {
 	sv.datagram.maxsize = MAX_DATAGRAM;
 	sv.datagram.cursize = 0;
 	sv.datagram.data = sv.datagram_buf;
+	sv.datagram.allowoverflow = true; // unreliable messages can be dropped
 
 	sv.reliable_datagram.maxsize = MAX_DATAGRAM;
 	sv.reliable_datagram.cursize = 0;
 	sv.reliable_datagram.data = sv.reliable_datagram_buf;
+	sv.reliable_datagram.allowoverflow = true; // will be copied to client reliables
 
 	sv.signon.maxsize = 8192;
 	sv.signon.cursize = 0;

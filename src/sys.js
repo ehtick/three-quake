@@ -18,8 +18,12 @@ export function Sys_Error( error ) {
 
 	console.error( 'Sys_Error: ' + error );
 
-	// Display error on screen
-	document.body.innerHTML = '<pre style="color:red;padding:20px;font-size:16px;">Sys_Error: ' + error + '</pre>';
+	// Display error on screen (browser only)
+	if ( typeof document !== 'undefined' ) {
+
+		document.body.innerHTML = '<pre style="color:red;padding:20px;font-size:16px;">Sys_Error: ' + error + '</pre>';
+
+	}
 
 	throw new Error( error );
 

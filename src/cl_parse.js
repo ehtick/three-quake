@@ -46,8 +46,11 @@ import {
 	cl, cls, cl_entities, cl_static_entities, cl_lightstyle,
 	entity_t, scoreboard_t, lightstyle_t } from './client.js';
 import { VectorCopy } from './mathlib.js';
+import { V_ParseDamage } from './view.js';
 import { Mod_ForName } from './gl_model.js';
+import { R_TranslatePlayerSkin } from './gl_rmisc.js';
 import { R_NewMap } from './gl_rmisc.js';
+import { R_ParseParticleEffect, R_AddEfrags } from './render.js';
 import { Host_Error, Host_EndGame, host_framecount, realtime, set_noclip_anglehack } from './host.js';
 import { CL_SignonReply, CL_ClearState, cl_shownet } from './cl_main.js';
 import { CL_ParseTEnt } from './cl_tent.js';
@@ -433,8 +436,13 @@ export function CL_ParseUpdate( bits ) {
 		ent.colormap = null; // vid.colormap
 	else {
 
-		if ( i > cl.maxclients )
+		if ( i > cl.maxclients ) {
+
+			console.error( 'colormap error: i=' + i + ', cl.maxclients=' + cl.maxclients + ', entity=' + num + ', bits=' + bits.toString( 16 ) );
 			Sys_Error( 'i >= cl.maxclients' );
+
+		}
+
 		ent.colormap = cl.scores[ i - 1 ].translations;
 
 	}
@@ -663,14 +671,7 @@ export function CL_NewTranslation( slot ) {
 	if ( slot > cl.maxclients )
 		Sys_Error( 'CL_NewTranslation: slot > cl.maxclients' );
 
-	const top = cl.scores[ slot ].colors & 0xf0;
-	const bottom = ( cl.scores[ slot ].colors & 15 ) << 4;
-
-	// R_TranslatePlayerSkin( slot );
-
-	// Simplified translation - full implementation requires vid.colormap
-	// which is part of the software renderer
-	// For GL renderer, R_TranslatePlayerSkin handles this
+	R_TranslatePlayerSkin( slot );
 
 }
 
@@ -697,7 +698,7 @@ export function CL_ParseStatic() {
 
 	VectorCopy( ent.baseline.origin, ent.origin );
 	VectorCopy( ent.baseline.angles, ent.angles );
-	// R_AddEfrags( ent );
+	R_AddEfrags( ent );
 
 }
 
@@ -816,16 +817,7 @@ export function CL_ParseServerMessage() {
 				break;
 
 			case svc_damage:
-				// V_ParseDamage();
-				{
-
-					MSG_ReadByte(); // armor
-					MSG_ReadByte(); // blood
-					MSG_ReadCoord(); // from[0]
-					MSG_ReadCoord(); // from[1]
-					MSG_ReadCoord(); // from[2]
-
-				}
+				V_ParseDamage();
 				break;
 
 			case svc_serverinfo:
@@ -885,16 +877,7 @@ export function CL_ParseServerMessage() {
 				break;
 
 			case svc_particle:
-				// R_ParseParticleEffect();
-				{
-
-					// read and discard particle data
-					MSG_ReadCoord(); MSG_ReadCoord(); MSG_ReadCoord(); // org
-					for ( let j = 0; j < 3; j ++ ) MSG_ReadChar(); // dir
-					MSG_ReadByte(); // count
-					MSG_ReadByte(); // color
-
-				}
+				R_ParseParticleEffect();
 				break;
 
 			case svc_spawnbaseline:

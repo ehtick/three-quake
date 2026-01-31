@@ -7,6 +7,7 @@ import { COM_FindFile } from './pak.js';
 import {
 	sfx_t, sfxcache_t, channel_t, dma_t,
 	channels, MAX_CHANNELS, MAX_DYNAMIC_CHANNELS, NUM_AMBIENTS,
+	AMBIENT_WATER, AMBIENT_SKY,
 	total_channels, paintedtime, sn, shm,
 	listener_origin, listener_forward, listener_right, listener_up,
 	sound_nominal_clip_dist,
@@ -16,6 +17,7 @@ import {
 } from './sound.js';
 import { S_LoadSound } from './snd_mem.js';
 import { cl } from './client.js';
+import { Mod_PointInLeaf } from './gl_model.js';
 
 /*
 ==============================================================================
@@ -39,6 +41,10 @@ for ( let i = 0; i < MAX_SFX; i ++ )
 // Ambient sounds
 let ambient_sfx = new Array( NUM_AMBIENTS ).fill( null );
 let sound_started = false;
+let snd_ambient = true; // whether ambient sounds are enabled
+
+// Callback for host_frametime (to avoid circular dependency)
+let _getHostFrametime = () => 0;
 
 // nosound cvar
 const nosound = { name: 'nosound', string: '0', value: 0 };
@@ -160,6 +166,24 @@ export function S_Startup() {
 	}
 
 	sound_started = true;
+
+	// Precache ambient sounds
+	ambient_sfx[ AMBIENT_WATER ] = S_PrecacheSound( 'ambience/water1.wav' );
+	ambient_sfx[ AMBIENT_SKY ] = S_PrecacheSound( 'ambience/wind2.wav' );
+
+}
+
+/*
+================
+S_SetCallbacks
+
+Set callbacks for host_frametime access (to avoid circular dependency)
+================
+*/
+export function S_SetCallbacks( callbacks ) {
+
+	if ( callbacks.getHostFrametime )
+		_getHostFrametime = callbacks.getHostFrametime;
 
 }
 
@@ -585,6 +609,108 @@ export function S_ClearBuffer() {
 }
 
 /*
+===================
+S_UpdateAmbientSounds
+
+Updates the volumes of ambient sounds (water, wind, etc.) based on the
+leaf the listener is in.
+===================
+*/
+function S_UpdateAmbientSounds() {
+
+	if ( ! snd_ambient )
+		return;
+
+	// calc ambient sound levels
+	if ( cl.worldmodel == null )
+		return;
+
+	const leaf = Mod_PointInLeaf( listener_origin, cl.worldmodel );
+	if ( leaf == null || ambient_level.value === 0 ) {
+
+		// Clear all ambient channels
+		for ( let ambient_channel = 0; ambient_channel < NUM_AMBIENTS; ambient_channel ++ )
+			channels[ ambient_channel ].sfx = null;
+		return;
+
+	}
+
+	const host_frametime = _getHostFrametime();
+
+	for ( let ambient_channel = 0; ambient_channel < NUM_AMBIENTS; ambient_channel ++ ) {
+
+		const chan = channels[ ambient_channel ];
+		chan.sfx = ambient_sfx[ ambient_channel ];
+
+		// Skip if no sound precached for this ambient type
+		if ( chan.sfx == null )
+			continue;
+
+		// Calculate target volume from leaf's ambient level
+		let vol = ambient_level.value * leaf.ambient_sound_level[ ambient_channel ];
+		if ( vol < 8 )
+			vol = 0;
+
+		// don't adjust volume too fast - smooth fade in/out
+		if ( chan.master_vol < vol ) {
+
+			chan.master_vol += host_frametime * ambient_fade.value;
+			if ( chan.master_vol > vol )
+				chan.master_vol = vol;
+
+		} else if ( chan.master_vol > vol ) {
+
+			chan.master_vol -= host_frametime * ambient_fade.value;
+			if ( chan.master_vol < vol )
+				chan.master_vol = vol;
+
+		}
+
+		// Ambient sounds are omnidirectional - same volume in both ears
+		chan.leftvol = chan.master_vol;
+		chan.rightvol = chan.master_vol;
+
+		// Handle Web Audio playback for ambient sounds
+		const isAudible = chan.leftvol > 0 || chan.rightvol > 0;
+		if ( isAudible && chan.sfx ) {
+
+			if ( ! chan._audioSource ) {
+
+				// Start playing ambient sound
+				const sc = S_LoadSound( chan.sfx );
+				if ( sc ) {
+
+					_playWebAudio( sc, chan );
+
+				}
+
+			} else {
+
+				// Update volume
+				_updateWebAudioSpatial( chan );
+
+			}
+
+		} else if ( ! isAudible && chan._audioSource ) {
+
+			// Stop ambient sound when volume reaches 0
+			try {
+
+				chan._audioSource.stop();
+
+			} catch ( e ) { /* ignore */ }
+
+			chan._audioSource = null;
+			chan._gainNode = null;
+			chan._panNode = null;
+
+		}
+
+	}
+
+}
+
+/*
 =================
 S_Update
 =================
@@ -609,6 +735,9 @@ export function S_Update( origin, forward, right, up ) {
 	listener_up[ 0 ] = up[ 0 ];
 	listener_up[ 1 ] = up[ 1 ];
 	listener_up[ 2 ] = up[ 2 ];
+
+	// Update general area ambient sound sources
+	S_UpdateAmbientSounds();
 
 	// Update master volume
 	if ( masterGain ) {

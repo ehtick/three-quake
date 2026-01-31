@@ -32,6 +32,16 @@ import {
 	Loop_GetMessage, Loop_SendMessage, Loop_SendUnreliableMessage,
 	Loop_CanSendMessage, Loop_CanSendUnreliableMessage, Loop_Close
 } from './net_loop.js';
+import {
+	WT_Init, WT_Shutdown, WT_Listen,
+	WT_SearchForHosts, WT_Connect, WT_CheckNewConnections,
+	WT_QGetMessage, WT_QSendMessage, WT_SendUnreliableMessage,
+	WT_CanSendMessage, WT_CanSendUnreliableMessage, WT_Close,
+	WT_QueryRooms, WT_CreateRoom
+} from './net_webtransport.js';
+
+// Re-export for menu room list/creation
+export { WT_QueryRooms, WT_CreateRoom };
 import { MAX_SCOREBOARD } from './quakedef.js';
 
 //============================================================================
@@ -39,6 +49,7 @@ import { MAX_SCOREBOARD } from './quakedef.js';
 //============================================================================
 
 let listening = false;
+export function set_listening( state ) { listening = state; }
 
 let slistStartTime = 0;
 let slistLastShown = 0;
@@ -394,33 +405,10 @@ const slistPollProcedure = new PollProcedure( null, 0.0, Slist_Poll );
 
 /*
 ===================
-WT_QueryRooms
-
-Stub for WebTorrent room query functionality
-===================
-*/
-export function WT_QueryRooms() {
-
-	// WebTorrent multiplayer not yet implemented
-
-}
-
-/*
-===================
-WT_CreateRoom
-
-Stub for WebTorrent room creation functionality
-===================
-*/
-export function WT_CreateRoom() {
-
-	// WebTorrent multiplayer not yet implemented
-
-}
-
-/*
-===================
 NET_Connect
+
+Connects to a host. For local connections, this is synchronous.
+For remote connections (WebTransport), this returns a Promise.
 ===================
 */
 export function NET_Connect( host ) {
@@ -460,7 +448,32 @@ export function NET_Connect( host ) {
 
 	}
 
-	// For browser, just do a direct connect attempt
+	// Check if this looks like a remote address (not 'local')
+	// For remote connections, ONLY use WebTransport - never fallback to loopback
+	if ( host && host !== 'local' ) {
+
+		// Remote connection - must use WebTransport
+		if ( net_numdrivers <= 1 || ! net_drivers[ 1 ].initialized ) {
+
+			Con_Printf( 'NET_Connect: WebTransport not available for remote connection\n' );
+			return null;
+
+		}
+
+		set_net_driverlevel( 1 ); // WebTransport driver
+
+		// WebTransport Connect is async, return the promise
+		// If it fails, the error will propagate - do NOT fallback to loopback
+		const ret = net_drivers[ 1 ].Connect( host );
+		if ( ret ) return ret;
+
+		// WebTransport failed to start connection
+		Con_Printf( 'NET_Connect: failed to connect to %s\n', host );
+		return null;
+
+	}
+
+	// Local connection - use loopback driver
 	for ( let i = 0; i < net_numdrivers; i ++ ) {
 
 		set_net_driverlevel( i );
@@ -490,10 +503,10 @@ export function NET_CheckNewConnections() {
 		set_net_driverlevel( i );
 		if ( net_drivers[ net_driverlevel ].initialized === false )
 			continue;
-		if ( net_driverlevel && listening === false )
+		if ( net_driverlevel !== 0 && listening === false )
 			continue;
 		const ret = net_drivers[ net_driverlevel ].CheckNewConnections();
-		if ( ret ) {
+		if ( ret != null ) {
 
 			return ret;
 
@@ -769,12 +782,12 @@ NET_Init
 export function NET_Init() {
 
 	let i = COM_CheckParm( '-port' );
-	if ( ! i )
+	if ( i === 0 )
 		i = COM_CheckParm( '-udpport' );
-	if ( ! i )
+	if ( i === 0 )
 		i = COM_CheckParm( '-ipxport' );
 
-	if ( i ) {
+	if ( i !== 0 ) {
 
 		if ( i < com_argc - 1 )
 			set_DEFAULTnet_hostport( Q_atoi( com_argv[ i + 1 ] ) );
@@ -833,6 +846,26 @@ export function NET_Init() {
 	net_drivers[ 0 ].CanSendUnreliableMessage = Loop_CanSendUnreliableMessage;
 	net_drivers[ 0 ].Close = Loop_Close;
 	net_drivers[ 0 ].Shutdown = Loop_Shutdown;
+
+	// Set up the WebTransport driver (driver 1) for multiplayer
+	if ( typeof WebTransport !== 'undefined' ) {
+
+		set_net_numdrivers( 2 );
+		net_drivers[ 1 ].name = 'WebTransport';
+		net_drivers[ 1 ].Init = WT_Init;
+		net_drivers[ 1 ].Listen = WT_Listen;
+		net_drivers[ 1 ].SearchForHosts = WT_SearchForHosts;
+		net_drivers[ 1 ].Connect = WT_Connect;
+		net_drivers[ 1 ].CheckNewConnections = WT_CheckNewConnections;
+		net_drivers[ 1 ].QGetMessage = WT_QGetMessage;
+		net_drivers[ 1 ].QSendMessage = WT_QSendMessage;
+		net_drivers[ 1 ].SendUnreliableMessage = WT_SendUnreliableMessage;
+		net_drivers[ 1 ].CanSendMessage = WT_CanSendMessage;
+		net_drivers[ 1 ].CanSendUnreliableMessage = WT_CanSendUnreliableMessage;
+		net_drivers[ 1 ].Close = WT_Close;
+		net_drivers[ 1 ].Shutdown = WT_Shutdown;
+
+	}
 
 	// initialize all the drivers
 	for ( let d = 0; d < net_numdrivers; d ++ ) {

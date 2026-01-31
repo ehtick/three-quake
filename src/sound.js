@@ -17,6 +17,12 @@ export const MAX_CHANNELS = 128;
 export const MAX_DYNAMIC_CHANNELS = 32;
 export const NUM_AMBIENTS = 4;
 
+// Ambient sound types (from bspfile.h)
+export const AMBIENT_WATER = 0;
+export const AMBIENT_SKY = 1;
+export const AMBIENT_SLIME = 2;
+export const AMBIENT_LAVA = 3;
+
 /*
 ==============================================================================
 

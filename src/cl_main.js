@@ -8,7 +8,7 @@ import { PITCH, YAW, ROLL } from './quakedef.js';
 import { Con_Printf, Con_DPrintf, SZ_Alloc, SZ_Clear,
 	MSG_WriteByte, MSG_WriteString } from './common.js';
 import { Sys_Error } from './sys.js';
-import { NET_Connect, NET_SendMessage, NET_CanSendMessage } from './net_main.js';
+import { NET_Connect, NET_SendMessage, NET_CanSendMessage, NET_Close } from './net_main.js';
 import { cvar_t, Cvar_RegisterVariable } from './cvar.js';
 import { Cmd_AddCommand } from './cmd.js';
 import { Cbuf_InsertText } from './cmd.js';
@@ -25,11 +25,13 @@ import { SIGNONS, MAX_DLIGHTS, MAX_EFRAGS, MAX_BEAMS, MAX_TEMP_ENTITIES,
 	client_state_t, usercmd_t, cshift_t,
 	NUM_CSHIFTS } from './client.js';
 import { anglemod, VectorCopy, VectorSubtract, VectorMA, AngleVectors, DotProduct } from './mathlib.js';
-import { R_RocketTrail } from './render.js';
+import { R_RocketTrail, R_RemoveEfrags } from './render.js';
 import { CL_InitTEnts, CL_UpdateTEnts } from './cl_tent.js';
 import { host_frametime, realtime, host_framecount, Host_Error, Host_EndGame } from './host.js';
 import { SCR_EndLoadingPlaque, SCR_BeginLoadingPlaque } from './gl_screen.js';
 import { S_StopAllSounds } from './snd_dma.js';
+import { M_ConnectionError, M_ShouldReturnOnError } from './menu.js';
+import { key_menu, set_key_dest } from './keys.js';
 
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
@@ -190,7 +192,13 @@ export function CL_Disconnect() {
 		MSG_WriteByte( cls.message, clc_disconnect );
 		// NET_SendUnreliableMessage( cls.netcon, cls.message );
 		SZ_Clear( cls.message );
-		// NET_Close( cls.netcon );
+
+		if ( cls.netcon != null ) {
+
+			NET_Close( cls.netcon );
+			cls.netcon = null;
+
+		}
 
 		cls.state = ca_disconnected;
 		// if ( sv.active )
@@ -216,9 +224,10 @@ export function CL_Disconnect_f() {
 CL_EstablishConnection
 
 Host should be either "local" or a net address to be passed on
+For remote connections, this handles async WebTransport connections.
 =====================
 */
-export function CL_EstablishConnection( host ) {
+export async function CL_EstablishConnection( host ) {
 
 	if ( cls.state === ca_dedicated )
 		return;
@@ -228,9 +237,65 @@ export function CL_EstablishConnection( host ) {
 
 	CL_Disconnect();
 
-	cls.netcon = NET_Connect( host );
-	if ( ! cls.netcon )
-		Sys_Error( 'CL_Connect: connect failed\n' );
+	try {
+
+		// NET_Connect may return a Promise for async connections (WebTransport)
+		const result = NET_Connect( host );
+		if ( result instanceof Promise ) {
+
+			// Async connection (WebTransport) with timeout
+			Con_Printf( 'Connecting to %s...\n', host );
+
+			// 30-second timeout for connection attempts
+			const CONNECTION_TIMEOUT_MS = 30000;
+			const timeoutPromise = new Promise( ( _, reject ) => {
+
+				setTimeout( () => reject( new Error( 'Connection timed out after 30 seconds' ) ), CONNECTION_TIMEOUT_MS );
+
+			} );
+
+			cls.netcon = await Promise.race( [ result, timeoutPromise ] );
+
+		} else {
+
+			// Sync connection (loopback)
+			cls.netcon = result;
+
+		}
+
+	} catch ( error ) {
+
+		// Connection failed with error
+		Con_Printf( 'CL_Connect: %s\n', error.message || 'connection failed' );
+
+		// Return to menu if we should
+		if ( M_ShouldReturnOnError() ) {
+
+			M_ConnectionError( error.message || 'Connection failed' );
+			set_key_dest( key_menu );
+
+		}
+
+		return;
+
+	}
+
+	if ( ! cls.netcon ) {
+
+		Con_Printf( 'CL_Connect: connect failed\n' );
+
+		// Return to menu if we should
+		if ( M_ShouldReturnOnError() ) {
+
+			M_ConnectionError( 'Connection refused' );
+			set_key_dest( key_menu );
+
+		}
+
+		return;
+
+	}
+
 	Con_DPrintf( 'CL_EstablishConnection: connected to %s\n', host );
 
 	cls.demonum = - 1; // not in the demo loop now
@@ -413,7 +478,7 @@ export function CL_DecayLights() {
 	for ( let i = 0; i < MAX_DLIGHTS; i ++ ) {
 
 		const dl = cl_dlights[ i ];
-		if ( dl.die < cl.time || ! dl.radius )
+		if ( dl.die < cl.time || dl.radius <= 0 )
 			continue;
 
 		dl.radius -= time * dl.decay;
@@ -535,7 +600,7 @@ export function CL_RelinkEntities() {
 			// empty slot
 			if ( ent.forcelink ) {
 
-				// R_RemoveEfrags( ent ); // just became empty
+				R_RemoveEfrags( ent ); // just became empty
 
 			}
 

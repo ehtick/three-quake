@@ -223,13 +223,33 @@ export function COM_LoadFileAsString( filename ) {
 COM_FetchPak
 
 Fetches a .pak file from a URL using fetch(), returns a Promise<pack_t>
-This is new for the browser version.
+In Deno, loads from filesystem. In browser, uses fetch().
 =================
 */
 export async function COM_FetchPak( url, filename, onProgress ) {
 
 	Sys_Printf( 'Fetching ' + url + '...\\n' );
 
+	// Check if running in Deno
+	if ( typeof Deno !== 'undefined' ) {
+
+		// Load from filesystem in Deno
+		try {
+
+			const data = await Deno.readFile( url );
+			if ( onProgress ) onProgress( 1 );
+			return COM_LoadPackFile( filename, data.buffer );
+
+		} catch ( e ) {
+
+			Con_Printf( 'Failed to load ' + url + ': ' + e.message + '\\n' );
+			return null;
+
+		}
+
+	}
+
+	// Browser: use fetch
 	const response = await fetch( url );
 	if ( ! response.ok ) {
 

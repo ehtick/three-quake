@@ -89,6 +89,15 @@ for ( let i = 0; i < 7; i ++ ) hsb_weapons[ i ] = new Array( 5 ).fill( null );
 const hipweapons = [ HIT_LASER_CANNON_BIT, HIT_MJOLNIR_BIT, 4, HIT_PROXIMITY_GUN_BIT ];
 const hsb_items = new Array( 2 ).fill( null );
 
+// Scoreboard state
+const fragsort = new Array( MAX_SCOREBOARD ).fill( 0 );
+const scoreboardtext = [];
+for ( let i = 0; i < MAX_SCOREBOARD; i ++ ) scoreboardtext[ i ] = '';
+const scoreboardtop = new Array( MAX_SCOREBOARD ).fill( 0 );
+const scoreboardbottom = new Array( MAX_SCOREBOARD ).fill( 0 );
+const scoreboardcount = new Array( MAX_SCOREBOARD ).fill( 0 );
+let scoreboardlines = 0;
+
 /*
 ==============================================================================
 
@@ -97,7 +106,7 @@ const hsb_items = new Array( 2 ).fill( null );
 ==============================================================================
 */
 
-let _cl = { stats: new Int32Array( 32 ), items: 0, gametype: 0, scores: [], time: 0, faceanimtime: 0 };
+let _cl = { stats: new Int32Array( 32 ), items: 0, gametype: 0, scores: [], time: 0, faceanimtime: 0, maxclients: 16, levelname: '' };
 let _realVid = { width: 640, height: 480, numpages: 1 };
 const _vid = {
 	get width() { return Math.floor( _realVid.width / ( window.devicePixelRatio || 1 ) ); },
@@ -512,6 +521,137 @@ function Sbar_DrawFrags() {
 
 /*
 ===============
+Sbar_SortFrags
+===============
+*/
+function Sbar_SortFrags() {
+
+	// sort by frags
+	scoreboardlines = 0;
+	const maxclients = _cl.maxclients || 16;
+
+	for ( let i = 0; i < maxclients; i ++ ) {
+
+		if ( _cl.scores && _cl.scores[ i ] && _cl.scores[ i ].name && _cl.scores[ i ].name.length > 0 ) {
+
+			fragsort[ scoreboardlines ] = i;
+			scoreboardlines ++;
+
+		}
+
+	}
+
+	// bubble sort by frags (descending)
+	for ( let i = 0; i < scoreboardlines; i ++ ) {
+
+		for ( let j = 0; j < scoreboardlines - 1 - i; j ++ ) {
+
+			if ( _cl.scores[ fragsort[ j ] ].frags < _cl.scores[ fragsort[ j + 1 ] ].frags ) {
+
+				const k = fragsort[ j ];
+				fragsort[ j ] = fragsort[ j + 1 ];
+				fragsort[ j + 1 ] = k;
+
+			}
+
+		}
+
+	}
+
+}
+
+/*
+===============
+Sbar_ColorForMap
+===============
+*/
+function Sbar_ColorForMap( m ) {
+
+	return m < 128 ? m + 8 : m + 8;
+
+}
+
+/*
+===============
+Sbar_UpdateScoreboard
+===============
+*/
+function Sbar_UpdateScoreboard() {
+
+	Sbar_SortFrags();
+
+	// draw the text
+	for ( let i = 0; i < MAX_SCOREBOARD; i ++ ) {
+
+		scoreboardtext[ i ] = '';
+
+	}
+
+	for ( let i = 0; i < scoreboardlines; i ++ ) {
+
+		const k = fragsort[ i ];
+		const s = _cl.scores[ k ];
+
+		// format: " %3i %s" (frags + name)
+		const fragStr = String( s.frags ).padStart( 3, ' ' );
+		scoreboardtext[ i ] = ' ' + fragStr + ' ' + ( s.name || '' );
+
+		const top = s.colors & 0xf0;
+		const bottom = ( s.colors & 15 ) << 4;
+		scoreboardtop[ i ] = Sbar_ColorForMap( top );
+		scoreboardbottom[ i ] = Sbar_ColorForMap( bottom );
+
+	}
+
+}
+
+/*
+===============
+Sbar_SoloScoreboard
+===============
+*/
+function Sbar_SoloScoreboard() {
+
+	// Monsters
+	const monstersStr = 'Monsters:' + String( _cl.stats[ STAT_MONSTERS ] ).padStart( 3, ' ' ) + ' /' +
+		String( _cl.stats[ STAT_TOTALMONSTERS ] ).padStart( 3, ' ' );
+	Sbar_DrawString( 8, 4, monstersStr );
+
+	// Secrets
+	const secretsStr = 'Secrets :' + String( _cl.stats[ STAT_SECRETS ] ).padStart( 3, ' ' ) + ' /' +
+		String( _cl.stats[ STAT_TOTALSECRETS ] ).padStart( 3, ' ' );
+	Sbar_DrawString( 8, 12, secretsStr );
+
+	// Time
+	const minutes = Math.floor( _cl.time / 60 );
+	const seconds = Math.floor( _cl.time ) - 60 * minutes;
+	const tens = Math.floor( seconds / 10 );
+	const units = seconds - 10 * tens;
+	const timeStr = 'Time :' + String( minutes ).padStart( 3, ' ' ) + ':' + tens + units;
+	Sbar_DrawString( 184, 4, timeStr );
+
+	// Level name
+	const levelname = _cl.levelname || '';
+	const l = levelname.length;
+	Sbar_DrawString( 232 - l * 4, 12, levelname );
+
+}
+
+/*
+===============
+Sbar_DrawScoreboard
+===============
+*/
+function Sbar_DrawScoreboard() {
+
+	Sbar_SoloScoreboard();
+	if ( _cl.gametype === GAME_DEATHMATCH )
+		Sbar_DeathmatchOverlay();
+
+}
+
+/*
+===============
 Sbar_DrawFace
 
 Returns the health face to display
@@ -639,7 +779,7 @@ export function Sbar_Draw() {
 	if ( sb_showscores || _cl.stats[ STAT_HEALTH ] <= 0 ) {
 
 		// Show the scoreboard
-		Sbar_DeathmatchOverlay();
+		Sbar_DrawScoreboard();
 
 	}
 

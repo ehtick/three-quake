@@ -15,6 +15,8 @@ import { d_lightstylevalue, r_viewleaf, r_norefresh, r_lightmap,
 	envmap } from './glquake.js';
 import { r_worldentity, R_Init as R_Init_rmain, GL_BuildLightmaps as GL_BuildLightmaps_impl } from './gl_rmain.js';
 import { set_skytexturenum as set_skytexturenum_rsurf } from './gl_rsurf.js';
+import { cl, cl_entities } from './client.js';
+import { d_8to24table } from './vid.js';
 
 // External function stubs (set by engine)
 let Cmd_AddCommand = null;
@@ -283,7 +285,7 @@ Translates a skin texture by the per-player color lookup.
 For Three.js, builds a new texture with translated colors.
 ===============
 */
-export function R_TranslatePlayerSkin( playernum, cl, d_8to24table ) {
+export function R_TranslatePlayerSkin( playernum ) {
 
 	const top = cl.scores[ playernum ].colors & 0xf0;
 	const bottom = ( cl.scores[ playernum ].colors & 15 ) << 4;
@@ -312,7 +314,7 @@ export function R_TranslatePlayerSkin( playernum, cl, d_8to24table ) {
 	//
 	// locate the original skin pixels
 	//
-	const entity = cl.entities[ 1 + playernum ];
+	const entity = cl_entities[ 1 + playernum ];
 	if ( ! entity || ! entity.model )
 		return null; // player doesn't have a model yet
 

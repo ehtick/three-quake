@@ -2,6 +2,7 @@
 
 import { entity_state_t } from './quakedef.js';
 import { vrect_t } from './vid.js';
+import { MSG_ReadCoord, MSG_ReadChar, MSG_ReadByte } from './common.js';
 import {
 	R_RunParticleEffect as _R_RunParticleEffect,
 	R_RocketTrail as _R_RocketTrail,
@@ -186,17 +187,8 @@ export function R_InitSky( mt ) {
 
 }
 
-export function R_AddEfrags( ent ) {
-
-	// Add entity fragments
-
-}
-
-export function R_RemoveEfrags( ent ) {
-
-	// Remove entity fragments
-
-}
+// R_AddEfrags and R_RemoveEfrags implemented in gl_refrag.js
+export { R_AddEfrags, R_RemoveEfrags, R_StoreEfrags } from './gl_refrag.js';
 
 export function R_NewMap() {
 
@@ -210,7 +202,24 @@ export function R_NewMap() {
 
 export function R_ParseParticleEffect() {
 
-	// Stub
+	const org = new Float32Array( 3 );
+	const dir = new Float32Array( 3 );
+
+	for ( let i = 0; i < 3; i ++ )
+		org[ i ] = MSG_ReadCoord();
+	for ( let i = 0; i < 3; i ++ )
+		dir[ i ] = MSG_ReadChar() * ( 1.0 / 16 );
+
+	const msgcount = MSG_ReadByte();
+	const color = MSG_ReadByte();
+
+	let count;
+	if ( msgcount === 255 )
+		count = 1024;
+	else
+		count = msgcount;
+
+	_R_RunParticleEffect( org, dir, color, count );
 
 }
 

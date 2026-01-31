@@ -3,7 +3,7 @@
 import { Sys_Printf } from './sys.js';
 import { Con_Printf, Con_DPrintf, MSG_ReadFloat, MSG_ReadAngle, MSG_ReadShort,
 	MSG_ReadByte, MSG_ReadChar, MSG_ReadString, MSG_BeginReading,
-	msg_badread } from './common.js';
+	msg_badread, net_message } from './common.js';
 import { vec3_origin, DotProduct, VectorCopy, VectorAdd, VectorSubtract,
 	VectorMA, VectorScale, VectorNormalize, Length, AngleVectors, M_PI } from './mathlib.js';
 import { ON_EPSILON, PITCH, YAW, ROLL } from './quakedef.js';
@@ -133,7 +133,7 @@ export function SV_SetIdealPitch() {
 
 	}
 
-	if ( ! dir ) {
+	if ( dir === 0 ) {
 
 		sv_player.v.idealpitch = 0;
 		return;
@@ -158,7 +158,7 @@ export function SV_UserFriction() {
 	const stop = new Float32Array( 3 );
 
 	const speed = Math.sqrt( vel[ 0 ] * vel[ 0 ] + vel[ 1 ] * vel[ 1 ] );
-	if ( ! speed )
+	if ( speed === 0 )
 		return;
 
 	// if the leading edge is over a dropoff, increase friction
@@ -270,7 +270,7 @@ export function SV_WaterMove() {
 	for ( let i = 0; i < 3; i ++ )
 		wishvel[ i ] = forward[ i ] * cmd.forwardmove + right[ i ] * cmd.sidemove;
 
-	if ( ! cmd.forwardmove && ! cmd.sidemove && ! cmd.upmove )
+	if ( cmd.forwardmove === 0 && cmd.sidemove === 0 && cmd.upmove === 0 )
 		wishvel[ 2 ] -= 60; // drift towards bottom
 	else
 		wishvel[ 2 ] += cmd.upmove;
@@ -306,7 +306,7 @@ export function SV_WaterMove() {
 	//
 	// water acceleration
 	//
-	if ( ! _wishspeed )
+	if ( _wishspeed === 0 )
 		return;
 
 	const addspeed = _wishspeed - newspeed;
@@ -331,7 +331,7 @@ SV_WaterJump
 function SV_WaterJump() {
 
 	if ( sv.time > sv_player.v.teleport_time
-		|| ! sv_player.v.waterlevel ) {
+		|| sv_player.v.waterlevel === 0 ) {
 
 		sv_player.v.flags = ( sv_player.v.flags | 0 ) & ~FL_WATERJUMP;
 		sv_player.v.teleport_time = 0;
@@ -433,7 +433,7 @@ export function SV_ClientThink() {
 
 	VectorAdd( sv_player.v.v_angle, sv_player.v.punchangle, v_angle );
 	angles[ ROLL ] = V_CalcRoll( sv_player.v.angles, sv_player.v.velocity ) * 4;
-	if ( ! sv_player.v.fixangle ) {
+	if ( sv_player.v.fixangle === 0 ) {
 
 		angles[ PITCH ] = - v_angle[ PITCH ] / 3;
 		angles[ YAW ] = v_angle[ YAW ];
@@ -595,6 +595,10 @@ export function SV_ReadClientMessage() {
 					return false;
 
 				case clc_move:
+					// Ensure cmd object exists before reading into it
+					if ( ! host_client.cmd ) {
+						host_client.cmd = { forwardmove: 0, sidemove: 0, upmove: 0 };
+					}
 					SV_ReadClientMove( host_client.cmd );
 					break;
 

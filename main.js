@@ -92,6 +92,19 @@ async function main() {
 
 		}
 
+		// Check URL parameters for auto-join
+		const urlParams = new URLSearchParams( window.location.search );
+		const roomId = urlParams.get( 'room' );
+
+		if ( roomId ) {
+
+			const serverUrl = urlParams.get( 'server' ) || 'https://wts.mrdoob.com:4433';
+			const connectUrl = serverUrl + '?room=' + encodeURIComponent( roomId );
+			Sys_Printf( 'Auto-joining room: %s\\n', roomId );
+			Cbuf_AddText( 'connect "' + connectUrl + '"\n' );
+
+		}
+
 		// Expose for debugging
 		window.Cbuf_AddText = Cbuf_AddText;
 		window.cls = cls;

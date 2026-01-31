@@ -5,8 +5,9 @@ import { Cmd_AddCommand } from './cmd.js';
 import { Con_Printf, Con_ToggleConsole_f } from './console.js';
 import {
 	K_ESCAPE, K_ENTER, K_UPARROW, K_DOWNARROW, K_LEFTARROW, K_RIGHTARROW,
-	K_BACKSPACE,
-	key_game, key_console, key_menu, key_dest
+	K_BACKSPACE, K_DEL,
+	key_game, key_console, key_menu, key_dest,
+	keybindings, Key_SetBinding, Key_KeynumToString
 } from './keys.js';
 import { cl_forwardspeed, cl_backspeed } from './cl_input.js';
 import { sensitivity, m_pitch, lookspring, lookstrafe } from './cl_main.js';
@@ -15,6 +16,7 @@ import { Cvar_SetValue } from './cvar.js';
 import { scr_viewsize, scr_con_current } from './gl_screen.js';
 import { v_gamma } from './view.js';
 import { gl_texturemode, GL_UpdateTextureFiltering } from './glquake.js';
+import { skill, coop, teamplay, fraglimit, timelimit, deathmatch, svs } from './server.js';
 
 /*
 ==============================================================================
@@ -53,6 +55,171 @@ let m_return_onerror = false;
 let m_return_reason = '';
 
 let m_save_demonum = 0;
+
+/*
+==============================================================================
+
+			LAN CONFIG MENU (Join Game)
+
+==============================================================================
+*/
+
+let lanConfig_cursor = 0;
+let lanConfig_joinname = ''; // Room code or full URL (max 64 chars)
+
+// Default WebTransport server (can be overridden by URL param)
+const DEFAULT_WT_SERVER = 'https://wts.mrdoob.com:4433';
+
+// Room list state
+let slist_rooms = []; // Array of {id, name, map, playerCount, maxPlayers}
+let slist_cursor = 0;
+let slist_fetching = false;
+let slist_error = '';
+
+// WT_QueryRooms and WT_CreateRoom will be injected via M_SetExternals
+let _WT_QueryRooms = null;
+let _WT_CreateRoom = null;
+
+/**
+ * Fetch room list from server via WebTransport
+ */
+async function M_FetchRooms() {
+
+	slist_fetching = true;
+	slist_error = '';
+	slist_rooms = [];
+
+	try {
+
+		const params = new URLSearchParams( window.location.search );
+		const serverUrl = params.get( 'server' ) || DEFAULT_WT_SERVER;
+
+		if ( ! _WT_QueryRooms ) {
+
+			throw new Error( 'WebTransport not available' );
+
+		}
+
+		slist_rooms = await _WT_QueryRooms( serverUrl );
+
+	} catch ( e ) {
+
+		slist_error = e.message || 'Failed to fetch rooms';
+		Con_Printf( 'Room fetch error: %s\n', slist_error );
+
+	}
+
+	slist_fetching = false;
+
+}
+
+/*
+==============================================================================
+
+			GAME OPTIONS MENU (New Game)
+
+==============================================================================
+*/
+
+let gameoptions_cursor = 0;
+const gameoptions_cursor_table = [ 40, 56, 64, 72, 80, 104, 112 ];
+const NUM_GAMEOPTIONS = 7;
+
+let maxplayers = 4;
+let startepisode = 0;
+let startlevel = 0;
+
+// Level data from original menu.c
+const levels = [
+	{ name: 'start', description: 'Entrance' }, // 0
+
+	{ name: 'e1m1', description: 'Slipgate Complex' }, // 1
+	{ name: 'e1m2', description: 'Castle of the Damned' },
+	{ name: 'e1m3', description: 'The Necropolis' },
+	{ name: 'e1m4', description: 'The Grisly Grotto' },
+	{ name: 'e1m5', description: 'Gloom Keep' },
+	{ name: 'e1m6', description: 'The Door To Chthon' },
+	{ name: 'e1m7', description: 'The House of Chthon' },
+	{ name: 'e1m8', description: 'Ziggurat Vertigo' },
+
+	{ name: 'e2m1', description: 'The Installation' }, // 9
+	{ name: 'e2m2', description: 'Ogre Citadel' },
+	{ name: 'e2m3', description: 'Crypt of Decay' },
+	{ name: 'e2m4', description: 'The Ebon Fortress' },
+	{ name: 'e2m5', description: 'The Wizard\'s Manse' },
+	{ name: 'e2m6', description: 'The Dismal Oubliette' },
+	{ name: 'e2m7', description: 'Underearth' },
+
+	{ name: 'e3m1', description: 'Termination Central' }, // 16
+	{ name: 'e3m2', description: 'The Vaults of Zin' },
+	{ name: 'e3m3', description: 'The Tomb of Terror' },
+	{ name: 'e3m4', description: 'Satan\'s Dark Delight' },
+	{ name: 'e3m5', description: 'Wind Tunnels' },
+	{ name: 'e3m6', description: 'Chambers of Torment' },
+	{ name: 'e3m7', description: 'The Haunted Halls' },
+
+	{ name: 'e4m1', description: 'The Sewage System' }, // 23
+	{ name: 'e4m2', description: 'The Tower of Despair' },
+	{ name: 'e4m3', description: 'The Elder God Shrine' },
+	{ name: 'e4m4', description: 'The Palace of Hate' },
+	{ name: 'e4m5', description: 'Hell\'s Atrium' },
+	{ name: 'e4m6', description: 'The Pain Maze' },
+	{ name: 'e4m7', description: 'Azure Agony' },
+	{ name: 'e4m8', description: 'The Nameless City' },
+
+	{ name: 'end', description: 'Shub-Niggurath\'s Pit' }, // 31
+
+	{ name: 'dm1', description: 'Place of Two Deaths' }, // 32
+	{ name: 'dm2', description: 'Claustrophobopolis' },
+	{ name: 'dm3', description: 'The Abandoned Base' },
+	{ name: 'dm4', description: 'The Bad Place' },
+	{ name: 'dm5', description: 'The Cistern' },
+	{ name: 'dm6', description: 'The Dark Zone' }
+];
+
+const episodes = [
+	{ description: 'Welcome to Quake', firstLevel: 0, levels: 1 },
+	{ description: 'Doomed Dimension', firstLevel: 1, levels: 8 },
+	{ description: 'Realm of Black Magic', firstLevel: 9, levels: 7 },
+	{ description: 'Netherworld', firstLevel: 16, levels: 7 },
+	{ description: 'The Elder World', firstLevel: 23, levels: 8 },
+	{ description: 'Final Level', firstLevel: 31, levels: 1 },
+	{ description: 'Deathmatch Arena', firstLevel: 32, levels: 6 }
+];
+
+/*
+==============================================================================
+
+			CONNECTION ERROR HANDLING
+
+==============================================================================
+*/
+
+/**
+ * Called when a connection attempt fails.
+ * If m_return_onerror is set, returns to the menu with error message displayed.
+ */
+export function M_ConnectionError( reason ) {
+
+	if ( m_return_onerror ) {
+
+		m_return_reason = reason || 'Connection failed';
+		m_state = m_return_state;
+		m_return_onerror = false;
+		// Note: key_dest should already be key_menu since we're returning
+
+	}
+
+}
+
+/**
+ * Check if we should return to menu on connection error.
+ */
+export function M_ShouldReturnOnError() {
+
+	return m_return_onerror;
+
+}
 
 /*
 ==============================================================================
@@ -114,6 +281,8 @@ export function M_SetExternals( externals ) {
 	if ( externals.host_time_get ) _host_time_get = externals.host_time_get;
 	if ( externals.realtime_get ) _realtime_get = externals.realtime_get;
 	if ( externals.CL_NextDemo ) _CL_NextDemo = externals.CL_NextDemo;
+	if ( externals.WT_QueryRooms ) _WT_QueryRooms = externals.WT_QueryRooms;
+	if ( externals.WT_CreateRoom ) _WT_CreateRoom = externals.WT_CreateRoom;
 
 }
 
@@ -759,8 +928,12 @@ function M_MultiPlayer_Key( key ) {
 			switch ( m_multiplayer_cursor ) {
 
 				case 0:
+					// Join Game -> LAN Config (room code entry)
+					M_Menu_LanConfig_f();
+					break;
 				case 1:
-					// Network menus - stub for browser
+					// New Game -> Game Options
+					M_Menu_GameOptions_f();
 					break;
 				case 2:
 					M_Menu_Setup_f();
@@ -768,6 +941,404 @@ function M_MultiPlayer_Key( key ) {
 
 			}
 
+			break;
+
+	}
+
+}
+
+/*
+==============================================================================
+
+			LAN CONFIG MENU (Join Game via WebTransport)
+
+==============================================================================
+*/
+
+function M_Menu_LanConfig_f() {
+
+	setKeyDest( key_menu );
+	m_state = m_lanconfig;
+	m_entersound = true;
+
+	slist_cursor = 0;
+	m_return_onerror = false;
+	m_return_reason = '';
+
+	// Fetch room list
+	M_FetchRooms();
+
+}
+
+function M_LanConfig_Draw() {
+
+	if ( ! _Draw_CachePic ) return;
+
+	M_DrawTransPic( 16, 4, _Draw_CachePic( 'gfx/qplaque.lmp' ) );
+	const p = _Draw_CachePic( 'gfx/p_multi.lmp' );
+	const basex = ( 320 - ( p ? p.width : 0 ) ) / 2;
+	M_DrawPic( basex, 4, p );
+
+	M_Print( basex, 32, 'Join Game' );
+
+	if ( slist_fetching ) {
+
+		M_Print( basex, 52, 'Searching for games...' );
+
+	} else if ( slist_error ) {
+
+		M_Print( basex, 52, 'Error: ' + slist_error.substring( 0, 30 ) );
+		M_Print( basex, 68, 'Press SPACE to retry' );
+
+	} else if ( slist_rooms.length === 0 ) {
+
+		M_Print( basex, 52, 'No games found' );
+		M_Print( basex, 68, 'Press SPACE to refresh' );
+
+	} else {
+
+		// Draw room list
+		const maxVisible = 8;
+		const startIdx = Math.max( 0, slist_cursor - maxVisible + 1 );
+
+		for ( let i = 0; i < maxVisible && ( startIdx + i ) < slist_rooms.length; i ++ ) {
+
+			const room = slist_rooms[ startIdx + i ];
+			const y = 52 + i * 12;
+
+			// Room name and map
+			const info = room.map + ' (' + room.playerCount + '/' + room.maxPlayers + ')';
+			M_Print( basex, y, info );
+
+			// Room ID
+			M_PrintWhite( basex + 180, y, room.id );
+
+		}
+
+		// Draw cursor
+		const cursorY = 52 + ( slist_cursor - startIdx ) * 12;
+		M_DrawCharacter( basex - 8, cursorY, 12 + ( ( Math.floor( _realtime_get() * 4 ) ) & 1 ) );
+
+	}
+
+	// Error message from connection attempt
+	if ( m_return_reason ) {
+
+		M_PrintWhite( basex, 170, m_return_reason );
+
+	}
+
+}
+
+function M_LanConfig_Key( key ) {
+
+	switch ( key ) {
+
+		case K_ESCAPE:
+			M_Menu_MultiPlayer_f();
+			break;
+
+		case K_UPARROW:
+			if ( slist_rooms.length > 0 ) {
+
+				if ( _S_LocalSound ) _S_LocalSound( 'misc/menu1.wav' );
+				slist_cursor --;
+				if ( slist_cursor < 0 )
+					slist_cursor = slist_rooms.length - 1;
+
+			}
+
+			break;
+
+		case K_DOWNARROW:
+			if ( slist_rooms.length > 0 ) {
+
+				if ( _S_LocalSound ) _S_LocalSound( 'misc/menu1.wav' );
+				slist_cursor ++;
+				if ( slist_cursor >= slist_rooms.length )
+					slist_cursor = 0;
+
+			}
+
+			break;
+
+		case K_ENTER:
+			if ( slist_rooms.length > 0 && slist_cursor < slist_rooms.length ) {
+
+				// Join selected room
+				m_entersound = true;
+
+				const room = slist_rooms[ slist_cursor ];
+				const params = new URLSearchParams( window.location.search );
+				const serverUrl = params.get( 'server' ) || DEFAULT_WT_SERVER;
+				const connectUrl = serverUrl + '?room=' + encodeURIComponent( room.id );
+
+				// Set up error return
+				m_return_state = m_state;
+				m_return_onerror = true;
+
+				// Close menu and connect
+				setKeyDest( key_game );
+				m_state = m_none;
+				Cbuf_AddText( 'connect "' + connectUrl + '"\n' );
+
+			}
+
+			break;
+
+		case 32: // SPACE - refresh
+			M_FetchRooms();
+			break;
+
+	}
+
+}
+
+/*
+==============================================================================
+
+			GAME OPTIONS MENU (New Game / Host)
+
+==============================================================================
+*/
+
+function M_Menu_GameOptions_f() {
+
+	setKeyDest( key_menu );
+	m_state = m_gameoptions;
+	m_entersound = true;
+
+	if ( maxplayers === 0 )
+		maxplayers = svs.maxclients || 4;
+	if ( maxplayers < 2 )
+		maxplayers = 4;
+
+}
+
+function M_GameOptions_Draw() {
+
+	if ( ! _Draw_CachePic ) return;
+
+	M_DrawTransPic( 16, 4, _Draw_CachePic( 'gfx/qplaque.lmp' ) );
+	const p = _Draw_CachePic( 'gfx/p_multi.lmp' );
+	M_DrawPic( ( 320 - ( p ? p.width : 0 ) ) / 2, 4, p );
+
+	// Begin game button
+	M_DrawTextBox( 152, 32, 10, 1 );
+	M_Print( 160, 40, 'begin game' );
+
+	// Max players
+	M_Print( 0, 56, '      Max players' );
+	M_Print( 160, 56, String( maxplayers ) );
+
+	// Game type
+	M_Print( 0, 64, '        Game Type' );
+	if ( coop.value )
+		M_Print( 160, 64, 'Cooperative' );
+	else
+		M_Print( 160, 64, 'Deathmatch' );
+
+	// Teamplay
+	M_Print( 0, 72, '         Teamplay' );
+	let teamplayMsg;
+	switch ( Math.floor( teamplay.value ) ) {
+
+		case 1: teamplayMsg = 'No Friendly Fire'; break;
+		case 2: teamplayMsg = 'Friendly Fire'; break;
+		default: teamplayMsg = 'Off'; break;
+
+	}
+
+	M_Print( 160, 72, teamplayMsg );
+
+	// Skill
+	M_Print( 0, 80, '            Skill' );
+	let skillMsg;
+	if ( skill.value === 0 )
+		skillMsg = 'Easy difficulty';
+	else if ( skill.value === 1 )
+		skillMsg = 'Normal difficulty';
+	else if ( skill.value === 2 )
+		skillMsg = 'Hard difficulty';
+	else
+		skillMsg = 'Nightmare difficulty';
+	M_Print( 160, 80, skillMsg );
+
+	// Episode
+	M_Print( 0, 104, '         Episode' );
+	M_Print( 160, 104, episodes[ startepisode ].description );
+
+	// Level
+	M_Print( 0, 112, '           Level' );
+	const levelIdx = episodes[ startepisode ].firstLevel + startlevel;
+	M_Print( 160, 112, levels[ levelIdx ].description );
+	M_Print( 160, 120, levels[ levelIdx ].name );
+
+	// Cursor
+	M_DrawCharacter( 144, gameoptions_cursor_table[ gameoptions_cursor ], 12 + ( ( Math.floor( _realtime_get() * 4 ) ) & 1 ) );
+
+}
+
+function M_NetStart_Change( dir ) {
+
+	switch ( gameoptions_cursor ) {
+
+		case 1: // Max players
+			maxplayers += dir;
+			if ( maxplayers > 16 )
+				maxplayers = 16;
+			if ( maxplayers < 2 )
+				maxplayers = 2;
+			break;
+
+		case 2: // Game type (coop/deathmatch)
+			Cvar_SetValue( 'coop', coop.value ? 0 : 1 );
+			break;
+
+		case 3: // Teamplay
+			Cvar_SetValue( 'teamplay', teamplay.value + dir );
+			if ( teamplay.value > 2 )
+				Cvar_SetValue( 'teamplay', 0 );
+			else if ( teamplay.value < 0 )
+				Cvar_SetValue( 'teamplay', 2 );
+			break;
+
+		case 4: // Skill
+			Cvar_SetValue( 'skill', skill.value + dir );
+			if ( skill.value > 3 )
+				Cvar_SetValue( 'skill', 0 );
+			if ( skill.value < 0 )
+				Cvar_SetValue( 'skill', 3 );
+			break;
+
+		case 5: // Episode
+			startepisode += dir;
+
+			// Limit to available episodes (7 for registered, 2 for shareware)
+			const numEpisodes = 7; // TODO: check registered.value
+			if ( startepisode < 0 )
+				startepisode = numEpisodes - 1;
+			if ( startepisode >= numEpisodes )
+				startepisode = 0;
+
+			startlevel = 0;
+			break;
+
+		case 6: // Level
+			startlevel += dir;
+			const count = episodes[ startepisode ].levels;
+			if ( startlevel < 0 )
+				startlevel = count - 1;
+			if ( startlevel >= count )
+				startlevel = 0;
+			break;
+
+	}
+
+}
+
+function M_GameOptions_Key( key ) {
+
+	switch ( key ) {
+
+		case K_ESCAPE:
+			M_Menu_MultiPlayer_f();
+			break;
+
+		case K_UPARROW:
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu1.wav' );
+			gameoptions_cursor --;
+			if ( gameoptions_cursor < 0 )
+				gameoptions_cursor = NUM_GAMEOPTIONS - 1;
+			break;
+
+		case K_DOWNARROW:
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu1.wav' );
+			gameoptions_cursor ++;
+			if ( gameoptions_cursor >= NUM_GAMEOPTIONS )
+				gameoptions_cursor = 0;
+			break;
+
+		case K_LEFTARROW:
+			if ( gameoptions_cursor === 0 )
+				break;
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu3.wav' );
+			M_NetStart_Change( - 1 );
+			break;
+
+		case K_RIGHTARROW:
+			if ( gameoptions_cursor === 0 )
+				break;
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu3.wav' );
+			M_NetStart_Change( 1 );
+			break;
+
+		case K_ENTER:
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu2.wav' );
+			if ( gameoptions_cursor === 0 ) {
+
+				// Begin game - create room on server first
+				const levelIdx = episodes[ startepisode ].firstLevel + startlevel;
+				const mapName = levels[ levelIdx ].name;
+
+				// Create room on WebTransport server and connect as client
+				if ( _WT_CreateRoom ) {
+
+					const params = new URLSearchParams( window.location.search );
+					const serverUrl = params.get( 'server' ) || DEFAULT_WT_SERVER;
+
+					if ( _SCR_BeginLoadingPlaque ) _SCR_BeginLoadingPlaque();
+
+					_WT_CreateRoom( serverUrl, {
+						map: mapName,
+						maxPlayers: maxplayers,
+						hostName: 'Player' // TODO: use player name
+					} ).then( ( room ) => {
+
+						if ( room && room.id ) {
+
+							Con_Printf( 'Room created: ' + room.id + '\n' );
+							// Update browser URL so user can share it
+							const shareUrl = window.location.origin + window.location.pathname + '?room=' + room.id;
+							history.replaceState( null, '', shareUrl );
+
+							// Dismiss the menu before connecting (like original Quake)
+							setKeyDest( key_game );
+							m_state = m_none;
+
+							// Connect to the remote server as a client (not local game)
+							// The remote server is the authoritative game server
+							const connectUrl = serverUrl + '?room=' + room.id;
+							Cbuf_AddText( 'connect "' + connectUrl + '"\n' );
+
+						}
+
+					} ).catch( ( e ) => {
+
+						Con_Printf( 'Failed to create room: ' + e.message + '\n' );
+						if ( _SCR_EndLoadingPlaque ) _SCR_EndLoadingPlaque();
+
+					} );
+
+					return;
+
+				}
+
+				// Fallback: no WebTransport - start local game
+				if ( _sv.active )
+					Cbuf_AddText( 'disconnect\n' );
+
+				Cbuf_AddText( 'listen 0\n' );
+				Cbuf_AddText( 'maxplayers ' + maxplayers + '\n' );
+
+				if ( _SCR_BeginLoadingPlaque ) _SCR_BeginLoadingPlaque();
+
+				Cbuf_AddText( 'map ' + mapName + '\n' );
+				return;
+
+			}
+
+			M_NetStart_Change( 1 );
 			break;
 
 	}
@@ -1034,6 +1605,62 @@ const bindnames = [
 
 const NUMCOMMANDS = bindnames.length;
 
+/*
+===============
+M_FindKeysForCommand
+
+Finds up to two keys bound to a command
+===============
+*/
+function M_FindKeysForCommand( command ) {
+
+	const twokeys = [ - 1, - 1 ];
+	const l = command.length;
+	let count = 0;
+
+	for ( let j = 0; j < 256; j ++ ) {
+
+		const b = keybindings[ j ];
+		if ( b == null )
+			continue;
+		if ( b.substring( 0, l ) === command ) {
+
+			twokeys[ count ] = j;
+			count ++;
+			if ( count === 2 )
+				break;
+
+		}
+
+	}
+
+	return twokeys;
+
+}
+
+/*
+===============
+M_UnbindCommand
+
+Unbinds all keys for a command
+===============
+*/
+function M_UnbindCommand( command ) {
+
+	const l = command.length;
+
+	for ( let j = 0; j < 256; j ++ ) {
+
+		const b = keybindings[ j ];
+		if ( b == null )
+			continue;
+		if ( b.substring( 0, l ) === command )
+			Key_SetBinding( j, '' );
+
+	}
+
+}
+
 function M_Menu_Keys_f() {
 
 	setKeyDest( key_menu );
@@ -1059,16 +1686,37 @@ function M_Keys_Draw() {
 		const y = 48 + 8 * i;
 		M_Print( 16, y, bindnames[ i ][ 1 ] );
 
+		// Find keys bound to this command
+		const keys = M_FindKeysForCommand( bindnames[ i ][ 0 ] );
+
+		if ( keys[ 0 ] === - 1 ) {
+
+			M_Print( 140, y, '???' );
+
+		} else {
+
+			const name = Key_KeynumToString( keys[ 0 ] );
+			M_Print( 140, y, name );
+			const x = name.length * 8;
+			if ( keys[ 1 ] !== - 1 ) {
+
+				M_Print( 140 + x + 8, y, 'or' );
+				M_Print( 140 + x + 32, y, Key_KeynumToString( keys[ 1 ] ) );
+
+			}
+
+		}
+
 	}
 
 	// cursor
 	if ( bind_grab ) {
 
-		M_DrawCharacter( 140, 48 + m_keys_cursor * 8, 61 ); // '='
+		M_DrawCharacter( 130, 48 + m_keys_cursor * 8, 61 ); // '='
 
 	} else {
 
-		M_DrawCharacter( 140, 48 + m_keys_cursor * 8, 12 + ( ( Math.floor( _realtime_get() * 4 ) ) & 1 ) );
+		M_DrawCharacter( 130, 48 + m_keys_cursor * 8, 12 + ( ( Math.floor( _realtime_get() * 4 ) ) & 1 ) );
 
 	}
 
@@ -1115,12 +1763,20 @@ function M_Keys_Key( key ) {
 			if ( m_keys_cursor >= NUMCOMMANDS )
 				m_keys_cursor = 0;
 			break;
-		case K_ENTER:
+		case K_ENTER: {
+
+			const keys = M_FindKeysForCommand( bindnames[ m_keys_cursor ][ 0 ] );
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu2.wav' );
+			if ( keys[ 1 ] !== - 1 )
+				M_UnbindCommand( bindnames[ m_keys_cursor ][ 0 ] );
 			bind_grab = true;
 			break;
+
+		}
 		case K_BACKSPACE:
 		case K_DEL:
-			Cbuf_AddText( 'unbind "' + bindnames[ m_keys_cursor ][ 0 ] + '"\n' );
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu2.wav' );
+			M_UnbindCommand( bindnames[ m_keys_cursor ][ 0 ] );
 			break;
 
 	}
@@ -1375,6 +2031,8 @@ export function M_Init() {
 	Cmd_AddCommand( 'menu_video', M_Menu_Video_f );
 	Cmd_AddCommand( 'help', M_Menu_Help_f );
 	Cmd_AddCommand( 'menu_quit', M_Menu_Quit_f );
+	Cmd_AddCommand( 'menu_lanconfig', M_Menu_LanConfig_f );
+	Cmd_AddCommand( 'menu_gameoptions', M_Menu_GameOptions_f );
 
 }
 
@@ -1399,7 +2057,8 @@ export function M_Keydown( key ) {
 		case m_video: M_Video_Key( key ); return;
 		case m_help: M_Help_Key( key ); return;
 		case m_quit: M_Quit_Key( key ); return;
-		// net, serial, modem, lan, gameoptions, search, slist - stubs for browser
+		case m_lanconfig: M_LanConfig_Key( key ); return;
+		case m_gameoptions: M_GameOptions_Key( key ); return;
 		default: return;
 
 	}
@@ -1447,6 +2106,8 @@ export function M_Draw() {
 		case m_video: M_Video_Draw(); break;
 		case m_help: M_Help_Draw(); break;
 		case m_quit: M_Quit_Draw(); break;
+		case m_lanconfig: M_LanConfig_Draw(); break;
+		case m_gameoptions: M_GameOptions_Draw(); break;
 
 	}
 
@@ -1535,6 +2196,14 @@ export function M_TouchInput( touchX, touchY, screenWidth, screenHeight ) {
 
 		case m_quit:
 			M_Quit_Touch( vx, vy );
+			break;
+
+		case m_lanconfig:
+			M_LanConfig_Touch( vx, vy );
+			break;
+
+		case m_gameoptions:
+			M_GameOptions_Touch( vx, vy );
 			break;
 
 	}
@@ -1667,6 +2336,42 @@ function M_Quit_Touch( vx, vy ) {
 	} else {
 
 		M_Quit_Key( 110 ); // 'n'
+
+	}
+
+}
+
+// LAN Config touch - handle room list selection
+function M_LanConfig_Touch( vx, vy ) {
+
+	// Room list starts at y=52 with 12px spacing
+	if ( slist_rooms.length > 0 && vy >= 52 && vy < 52 + slist_rooms.length * 12 ) {
+
+		const item = Math.floor( ( vy - 52 ) / 12 );
+		if ( item >= 0 && item < slist_rooms.length ) {
+
+			slist_cursor = item;
+			M_LanConfig_Key( K_ENTER );
+
+		}
+
+	}
+
+}
+
+// Game Options touch - handle all options
+function M_GameOptions_Touch( vx, vy ) {
+
+	// Find which row was touched based on cursor table
+	for ( let i = 0; i < NUM_GAMEOPTIONS; i ++ ) {
+
+		if ( vy >= gameoptions_cursor_table[ i ] - 4 && vy < gameoptions_cursor_table[ i ] + 12 ) {
+
+			gameoptions_cursor = i;
+			M_GameOptions_Key( K_ENTER );
+			return;
+
+		}
 
 	}
 

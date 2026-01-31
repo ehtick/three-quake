@@ -13,7 +13,7 @@ import { NUM_FOR_EDICT, EDICT_NUM, EDICT_TO_PROG } from './progs.js';
 import { PR_ExecuteProgram } from './pr_exec.js';
 import { sv_player } from './sv_phys.js';
 import { cvar_t, Cvar_RegisterVariable } from './cvar.js';
-import { Cmd_Init, Cmd_AddCommand, Cbuf_Init, Cbuf_Execute, Cbuf_AddText, Cbuf_InsertText, Cmd_Argc, Cmd_Argv, Cmd_ExecuteString, cmd_source, src_command, src_client } from './cmd.js';
+import { Cmd_Init, Cmd_AddCommand, Cbuf_Init, Cbuf_Execute, Cbuf_AddText, Cbuf_InsertText, Cmd_Argc, Cmd_Argv, Cmd_ExecuteString, cmd_source, src_command, src_client, Cmd_SetClientCallbacks, Cmd_ForwardToServer } from './cmd.js';
 import { Memory_Init } from './zone.js';
 import { V_Init } from './view.js';
 import { Chase_Init } from './chase.js';
@@ -36,7 +36,7 @@ import { R_Init } from './gl_rmisc.js';
 import { VID_Init, VID_Shutdown } from './vid.js';
 import { Draw_Init, Draw_Character, Draw_String, Draw_ConsoleBackground, Draw_SetExternals, Draw_PicFromWad, Draw_CachePic, Draw_Pic, Draw_TransPic, Draw_Fill, Draw_FadeScreen } from './gl_draw.js';
 import { SCR_Init, SCR_UpdateScreen, SCR_SetExternals, SCR_EndLoadingPlaque, SCR_BeginLoadingPlaque } from './gl_screen.js';
-import { S_Init, S_Update, S_Shutdown, S_StopAllSounds } from './snd_dma.js';
+import { S_Init, S_Update, S_Shutdown, S_StopAllSounds, S_SetCallbacks } from './snd_dma.js';
 import { CDAudio_Init, CDAudio_Update, CDAudio_Shutdown } from './cd_audio.js';
 import { Sbar_Init, Sbar_SetExternals } from './sbar.js';
 import { CL_Init, CL_SendCmd, CL_ReadFromServer, CL_DecayLights, CL_Disconnect, CL_EstablishConnection, CL_NextDemo } from './cl_main.js';
@@ -45,6 +45,7 @@ import { IN_Init, IN_Commands, IN_Shutdown, IN_UpdateTouch, IN_RequestPointerLoc
 import { cls, cl, SIGNONS, ca_connected, ca_dedicated, MAX_DEMOS } from './client.js';
 import { key_dest, key_game, Key_SetExternals, set_key_dest } from './keys.js';
 import { r_origin, vpn, vright, vup } from './render.js';
+import { R_Efrag_SetExternals } from './gl_refrag.js';
 import { vec3_origin } from './mathlib.js';
 import { pr_global_struct } from './progs.js';
 import { vid, d_8to24table, renderer } from './vid.js';
@@ -335,6 +336,9 @@ export async function Host_Init( parms ) {
 	SCR_Init();
 	R_Init();
 	S_Init();
+	S_SetCallbacks( {
+		getHostFrametime: () => host_frametime
+	} );
 	CDAudio_Init();
 	Sbar_SetExternals( {
 		cl: cl,
@@ -349,6 +353,11 @@ export async function Host_Init( parms ) {
 	Sbar_Init();
 	CL_Init();
 	IN_Init();
+
+	// Wire cmd.js to client state for Cmd_ForwardToServer
+	Cmd_SetClientCallbacks( {
+		getClientState: () => ( { cls: cls, ca_connected: ca_connected } )
+	} );
 
 	// Wire cross-module externals
 	Con_SetExternals( {
@@ -379,6 +388,10 @@ export async function Host_Init( parms ) {
 	Key_SetExternals( {
 		cls: cls,
 		vid: vid
+	} );
+
+	R_Efrag_SetExternals( {
+		cl: cl
 	} );
 
 	Cbuf_InsertText( 'exec quake.rc\n' );
@@ -877,12 +890,20 @@ function Host_Kill_f() {
 
 	if ( cmd_source === src_command ) {
 
+		// If not running a local server, forward the command to the remote server
+		if ( ! sv.active ) {
+
+			Cmd_ForwardToServer();
+			return;
+
+		}
+
 		Cmd_ExecuteString( 'kill', src_client );
 		return;
 
 	}
 
-	if ( sv_player.v.health <= 0 ) {
+	if ( sv_player == null || sv_player.v.health <= 0 ) {
 
 		SV_ClientPrintf( 'Can\'t suicide -- allready dead!\n' );
 		return;

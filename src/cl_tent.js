@@ -22,6 +22,7 @@ import { VectorCopy, VectorSubtract, VectorNormalize, vec3_origin, M_PI } from '
 import { S_PrecacheSound, S_StartSound } from './snd_dma.js';
 import { R_RunParticleEffect, R_ParticleExplosion, R_BlobExplosion,
 	R_ParticleExplosion2, R_LavaSplash, R_TeleportSplash } from './render.js';
+import { Mod_ForName } from './gl_model.js';
 
 let num_temp_entities = 0;
 
@@ -195,7 +196,7 @@ export function CL_ParseTEnt() {
 			VectorCopy( pos, dl.origin );
 			dl.radius = 350;
 			dl.die = cl.time + 0.5;
-			dl.decay = 700; // 350/0.5 = fade to zero over 0.5 seconds
+			dl.decay = 300;
 			S_StartSound( - 1, 0, cl_sfx_r_exp3, pos, 1, 1 );
 			break;
 
@@ -210,20 +211,20 @@ export function CL_ParseTEnt() {
 			break;
 
 		case TE_LIGHTNING1: // lightning bolts
-			CL_ParseBeam( null /* Mod_ForName('progs/bolt.mdl', true) */ );
+			CL_ParseBeam( Mod_ForName( 'progs/bolt.mdl', true ) );
 			break;
 
 		case TE_LIGHTNING2: // lightning bolts
-			CL_ParseBeam( null /* Mod_ForName('progs/bolt2.mdl', true) */ );
+			CL_ParseBeam( Mod_ForName( 'progs/bolt2.mdl', true ) );
 			break;
 
 		case TE_LIGHTNING3: // lightning bolts
-			CL_ParseBeam( null /* Mod_ForName('progs/bolt3.mdl', true) */ );
+			CL_ParseBeam( Mod_ForName( 'progs/bolt3.mdl', true ) );
 			break;
 
 		// PGM 01/21/97
 		case TE_BEAM: // grappling hook beam
-			CL_ParseBeam( null /* Mod_ForName('progs/beam.mdl', true) */ );
+			CL_ParseBeam( Mod_ForName( 'progs/beam.mdl', true ) );
 			break;
 		// PGM 01/21/97
 
@@ -253,7 +254,7 @@ export function CL_ParseTEnt() {
 			VectorCopy( pos, dl2.origin );
 			dl2.radius = 350;
 			dl2.die = cl.time + 0.5;
-			dl2.decay = 700; // 350/0.5 = fade to zero over 0.5 seconds
+			dl2.decay = 300;
 			S_StartSound( - 1, 0, cl_sfx_r_exp3, pos, 1, 1 );
 			break;
 

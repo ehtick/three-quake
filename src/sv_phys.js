@@ -7,6 +7,7 @@ import { vec3_origin, DotProduct, VectorCopy, VectorAdd, VectorSubtract, VectorM
 	M_PI, anglemod } from './mathlib.js';
 import { ON_EPSILON, MAX_EDICTS, PITCH, YAW, ROLL } from './quakedef.js';
 import { PR_GetString } from './progs.js';
+import { trace_t } from './world.js';
 
 /*
 
@@ -683,10 +684,16 @@ export function SV_PushRotate( pusher, movetime ) {
 			for ( let i = 0; i < num_moved; i ++ ) {
 
 				VectorCopy( moved_from[ i ], moved_edict[ i ].v.origin );
+				VectorSubtract( moved_edict[ i ].v.angles, amove, moved_edict[ i ].v.angles );
 				SV_LinkEdict( moved_edict[ i ], false );
 
 			}
 			return;
+
+		} else {
+
+			// Entity was successfully moved, add angular movement
+			VectorAdd( check.v.angles, amove, check.v.angles );
 
 		}
 
@@ -1078,7 +1085,7 @@ export function SV_WalkMove( ent ) {
 	const oldvel = new Float32Array( 3 );
 	const nosteporg = new Float32Array( 3 );
 	const nostepvel = new Float32Array( 3 );
-	let steptrace = {};
+	let steptrace = new trace_t();
 
 	//
 	// do a regular slide move unless it looks like you ran into a step
@@ -1126,7 +1133,7 @@ export function SV_WalkMove( ent ) {
 	ent.v.velocity[ 0 ] = oldvel[ 0 ];
 	ent.v.velocity[ 1 ] = oldvel[ 1 ];
 	ent.v.velocity[ 2 ] = 0;
-	steptrace = {};
+	steptrace = new trace_t();
 	clip = SV_FlyMove( ent, host_frametime, steptrace );
 
 	// check for stuckness, possibly due to the limited precision of floats

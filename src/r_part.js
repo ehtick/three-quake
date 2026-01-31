@@ -573,8 +573,16 @@ export function R_DrawParticles() {
 
 	if ( ! client_cl || ! _scene ) return;
 
-	const frametime = client_cl.time - client_cl.oldtime;
-	if ( frametime <= 0 ) return;
+	// Use absolute frametime, not cl.time - cl.oldtime
+	// cl.time can be modified by CL_LerpPoint which causes frametime to go <= 0
+	let frametime = client_cl.time - client_cl.oldtime;
+	if ( frametime <= 0 || frametime > 0.5 ) {
+
+		// Fallback to a reasonable frametime for particle physics
+		// but still process dead particle removal
+		frametime = 0.016; // ~60fps default
+
+	}
 
 	const time3 = frametime * 15;
 	const time2 = frametime * 10;

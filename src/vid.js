@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { Sys_Error, Sys_Printf } from './sys.js';
-import { Con_Printf } from './common.js';
+import { Con_Printf } from './console.js';
 
 //
 // vid.h constants
@@ -218,7 +218,7 @@ export function VID_Init( palette ) {
 
 	} );
 
-	Con_Printf( 'VID_Init: Three.js WebGLRenderer initialized (' + vid.width + 'x' + vid.height + ')' );
+	Con_Printf( 'WebGLRenderer initialized (' + vid.width + 'x' + vid.height + ')\n' );
 
 }
 

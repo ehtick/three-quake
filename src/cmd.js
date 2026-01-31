@@ -1,8 +1,9 @@
 // Ported from: WinQuake/cmd.c -- Quake script command processing module
 
-import { Con_Printf, SZ_Alloc, SZ_Clear, SZ_Write, com_token, COM_Parse } from './common.js';
+import { Con_Printf, SZ_Alloc, SZ_Clear, SZ_Write, SZ_Print, com_token, COM_Parse, MSG_WriteByte } from './common.js';
 import { Cvar_Command, Cvar_VariableString } from './cvar.js';
 import { COM_LoadFileAsString } from './pak.js';
+import { clc_stringcmd } from './protocol.js';
 
 /*
 =============================================================================
@@ -31,6 +32,22 @@ let cmd_args = null;
 export let cmd_source = src_command;
 
 let cmd_functions = null; // linked list of registered commands
+
+// Callback injection for client state (to avoid circular dependency with client.js)
+let _getClientState = null;
+
+/*
+============
+Cmd_SetClientCallbacks
+
+Called from host.js after client.js is loaded to wire up client state access
+============
+*/
+export function Cmd_SetClientCallbacks( callbacks ) {
+
+	_getClientState = callbacks.getClientState;
+
+}
 
 /*
 ============
@@ -178,6 +195,7 @@ export function Cmd_Init() {
 	Cmd_AddCommand( 'exec', Cmd_Exec_f );
 	Cmd_AddCommand( 'echo', Cmd_Echo_f );
 	Cmd_AddCommand( 'alias', Cmd_Alias_f );
+	Cmd_AddCommand( 'cmd', Cmd_ForwardToServer );
 	Cmd_AddCommand( 'wait', Cmd_Wait_f );
 
 }
@@ -596,7 +614,47 @@ Sends the entire command line over to the server
 */
 export function Cmd_ForwardToServer() {
 
-	// TODO: implement when networking is ported
-	Con_Printf( 'Cmd_ForwardToServer: not implemented\n' );
+	// Get client state through callback (avoids circular dependency)
+	if ( _getClientState == null ) {
+
+		Con_Printf( 'Cmd_ForwardToServer: client not initialized\n' );
+		return;
+
+	}
+
+	const clientState = _getClientState();
+	const cls = clientState.cls;
+	const ca_connected = clientState.ca_connected;
+
+	if ( cls.state !== ca_connected ) {
+
+		Con_Printf( 'Can\'t "' + Cmd_Argv( 0 ) + '", not connected\n' );
+		return;
+
+	}
+
+	if ( cls.demoplayback )
+		return; // not really connected
+
+	MSG_WriteByte( cls.message, clc_stringcmd );
+
+	// If the command isn't "cmd", write the command name
+	if ( Cmd_Argv( 0 ).toLowerCase() !== 'cmd' ) {
+
+		SZ_Print( cls.message, Cmd_Argv( 0 ) );
+		SZ_Print( cls.message, ' ' );
+
+	}
+
+	// Write the arguments or just a newline
+	if ( Cmd_Argc() > 1 ) {
+
+		SZ_Print( cls.message, Cmd_Args() );
+
+	} else {
+
+		SZ_Print( cls.message, '\n' );
+
+	}
 
 }
