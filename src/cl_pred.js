@@ -243,12 +243,18 @@ export function CL_StoreCommand( cmd, senttime ) {
 	return framenum;
 }
 
+// Temporary player state for other-player prediction
+const _predFrom = new player_state_t();
+const _predTo = new player_state_t();
+
 /*
 =================
 CL_SetUpPlayerPrediction
 
 Calculate predicted positions for all other players.
-This extrapolates their position forward based on their last known velocity.
+Uses full physics prediction (CL_PredictUsercmd) when movement commands
+are available from svc_playerinfo, otherwise falls back to velocity
+extrapolation.
 Ported from QuakeWorld cl_ents.c
 =================
 */
@@ -275,7 +281,7 @@ export function CL_SetUpPlayerPrediction( dopred ) {
 
 		pplayer.active = true;
 		pplayer.modelindex = ent.model != null ? 1 : 0;
-		pplayer.msgtime = ent.msgtime;
+		if ( pplayer.msgtime === 0 ) pplayer.msgtime = ent.msgtime;
 		VectorCopy( ent.angles, pplayer.angles );
 
 		// For the local player, use our predicted position
@@ -283,35 +289,34 @@ export function CL_SetUpPlayerPrediction( dopred ) {
 			VectorCopy( cl_simorg, pplayer.origin );
 			VectorCopy( cl_simvel, pplayer.velocity );
 		} else {
-			// For other players, extrapolate based on velocity
-			// Calculate time since last update
-			const dt = playertime - ent.msgtime;
+			// Only predict half the move to minimize overruns (QW: msec = 500 * dt)
+			let msec = ( 500 * ( playertime - pplayer.msgtime ) ) | 0;
 
-			if ( dt <= 0 || cl_predict_players.value === 0 || ! dopred ) {
+			if ( msec <= 0 || cl_predict_players.value === 0 || ! dopred ) {
 				// No prediction - use last known position
-				VectorCopy( ent.origin, pplayer.origin );
-				// Estimate velocity from position delta
-				VectorSubtract( ent.msg_origins[ 0 ], ent.msg_origins[ 1 ], pplayer.velocity );
-				const msgdt = cl.mtime[ 0 ] - cl.mtime[ 1 ];
-				if ( msgdt > 0 ) {
-					pplayer.velocity[ 0 ] /= msgdt;
-					pplayer.velocity[ 1 ] /= msgdt;
-					pplayer.velocity[ 2 ] /= msgdt;
-				}
+				VectorCopy( pplayer.origin, pplayer.origin ); // keep svc_playerinfo origin
 			} else {
-				// Estimate velocity from position delta between last two updates
-				VectorSubtract( ent.msg_origins[ 0 ], ent.msg_origins[ 1 ], pplayer.velocity );
-				const msgdt = cl.mtime[ 0 ] - cl.mtime[ 1 ];
-				if ( msgdt > 0 ) {
-					pplayer.velocity[ 0 ] /= msgdt;
-					pplayer.velocity[ 1 ] /= msgdt;
-					pplayer.velocity[ 2 ] /= msgdt;
-				}
+				// Full physics prediction using movement commands from svc_playerinfo
+				if ( msec > 255 )
+					msec = 255;
 
-				// Extrapolate position forward
-				// Only predict half the move to minimize overruns (like QuakeWorld)
-				const predictTime = Math.min( dt * 0.5, 0.1 ); // Cap at 100ms
-				VectorMA( ent.origin, predictTime, pplayer.velocity, pplayer.origin );
+				// Build player state from svc_playerinfo data
+				VectorCopy( pplayer.origin, _predFrom.origin );
+				VectorCopy( pplayer.velocity, _predFrom.velocity );
+				VectorCopy( pplayer.cmd.angles, _predFrom.viewangles );
+				_predFrom.onground = ( pplayer.flags & PF_DEAD ) === 0; // dead players not on ground
+				_predFrom.oldbuttons = 0;
+				_predFrom.waterjumptime = 0;
+				_predFrom.weaponframe = pplayer.weaponframe;
+
+				// Set the prediction time on the command
+				pplayer.cmd.msec = msec;
+
+				// Run full physics prediction
+				CL_PredictUsercmd( _predFrom, _predTo, pplayer.cmd, false );
+
+				// Use the predicted result
+				VectorCopy( _predTo.origin, pplayer.origin );
 			}
 		}
 	}
