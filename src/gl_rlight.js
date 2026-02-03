@@ -83,6 +83,9 @@ Renders a dynamic light using Three.js PointLight.
 // Reusable vector for distance check
 const _dlightV = new Float32Array( 3 );
 
+// Reusable vector for R_LightPoint
+const _lightPointEnd = new Float32Array( 3 );
+
 // Pool of PointLights for dynamic lights
 const _dlightPool = [];
 
@@ -385,7 +388,7 @@ export function R_LightPoint( p, cl ) {
 	if ( ! cl.worldmodel || ! cl.worldmodel.lightdata )
 		return 255;
 
-	const end = new Float32Array( 3 );
+	const end = _lightPointEnd;
 	end[ 0 ] = p[ 0 ];
 	end[ 1 ] = p[ 1 ];
 	end[ 2 ] = p[ 2 ] - 2048;

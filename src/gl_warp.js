@@ -255,7 +255,8 @@ Does a water warp on the pre-fragmented glpoly_t chain.
 For Three.js, builds geometry with warped UVs.
 =============
 */
-export function EmitWaterPolys( fa, realtime ) {
+// NOTE: Dead code — the cached version EmitWaterPolysQuake in gl_rsurf.js is used instead.
+function EmitWaterPolys( fa, realtime ) {
 
 	const positions = [];
 	const uvs = [];
@@ -314,7 +315,8 @@ EmitSkyPolys
 For Three.js, builds sky geometry with computed UVs.
 =============
 */
-export function EmitSkyPolys( fa, realtime ) {
+// NOTE: Dead code — the cached version EmitSkyPolysQuake in gl_rsurf.js is used instead.
+function EmitSkyPolys( fa, realtime ) {
 
 	const positions = [];
 	const uvs = [];
@@ -381,7 +383,8 @@ This will be called for brushmodels, the world
 will have them chained together.
 ===============
 */
-export function EmitBothSkyLayers( fa, realtime ) {
+// NOTE: Dead code — R_DrawSkyChain in gl_rsurf.js handles sky rendering.
+function EmitBothSkyLayers( fa, realtime ) {
 
 	GL_DisableMultitexture();
 
@@ -406,7 +409,8 @@ export function EmitBothSkyLayers( fa, realtime ) {
 R_DrawSkyChain
 =================
 */
-export function R_DrawSkyChain( s, realtime ) {
+// NOTE: Dead code — R_DrawSkyChain in gl_rsurf.js is used instead.
+function R_DrawSkyChain( s, realtime ) {
 
 	GL_DisableMultitexture();
 

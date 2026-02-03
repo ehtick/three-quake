@@ -51,6 +51,7 @@ export const STAT_TOTALSECRETS = 11;
 export const STAT_TOTALMONSTERS = 12;
 export const STAT_SECRETS = 13; // bumped on client side by svc_foundsecret
 export const STAT_MONSTERS = 14; // bumped by svc_killedmonster
+export const STAT_PING = 15; // client round-trip time in milliseconds
 
 // stock defines
 

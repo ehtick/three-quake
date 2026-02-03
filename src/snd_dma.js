@@ -670,39 +670,31 @@ function S_UpdateAmbientSounds() {
 		chan.leftvol = chan.master_vol;
 		chan.rightvol = chan.master_vol;
 
-		// Handle Web Audio playback for ambient sounds
-		const isAudible = chan.leftvol > 0 || chan.rightvol > 0;
-		if ( isAudible && chan.sfx ) {
+		// Handle Web Audio playback for ambient sounds.
+		// Keep audio nodes alive and just update gain to avoid
+		// creating new nodes every time volume crosses zero.
+		if ( chan.sfx ) {
 
 			if ( ! chan._audioSource ) {
 
-				// Start playing ambient sound
-				const sc = S_LoadSound( chan.sfx );
-				if ( sc ) {
+				// No audio nodes yet - start playing if audible
+				if ( chan.leftvol > 0 || chan.rightvol > 0 ) {
 
-					_playWebAudio( sc, chan );
+					const sc = S_LoadSound( chan.sfx );
+					if ( sc ) {
+
+						_playWebAudio( sc, chan );
+
+					}
 
 				}
 
 			} else {
 
-				// Update volume
+				// Audio nodes exist - just update volume (will go to 0 when inaudible)
 				_updateWebAudioSpatial( chan );
 
 			}
-
-		} else if ( ! isAudible && chan._audioSource ) {
-
-			// Stop ambient sound when volume reaches 0
-			try {
-
-				chan._audioSource.stop();
-
-			} catch ( e ) { /* ignore */ }
-
-			chan._audioSource = null;
-			chan._gainNode = null;
-			chan._panNode = null;
 
 		}
 
@@ -762,33 +754,27 @@ export function S_Update( origin, forward, right, up ) {
 
 		if ( isStatic ) {
 
-			// Static/ambient sounds: start/stop based on audibility
-			if ( isAudible && ! ch._audioSource ) {
+			// Static/ambient sounds: keep audio nodes alive, just mute/unmute via gain.
+			// This avoids creating new AudioBufferSourceNode + GainNode + StereoPannerNode
+			// every time a sound crosses the audibility boundary (which causes memory leaks
+			// and event listener accumulation).
+			if ( ! ch._audioSource ) {
 
-				// Sound became audible - start playing
-				const sc = S_LoadSound( ch.sfx );
-				if ( sc ) {
+				// No audio nodes yet - start playing if audible
+				if ( isAudible ) {
 
-					_playWebAudio( sc, ch );
+					const sc = S_LoadSound( ch.sfx );
+					if ( sc ) {
+
+						_playWebAudio( sc, ch );
+
+					}
 
 				}
 
-			} else if ( ! isAudible && ch._audioSource ) {
+			} else {
 
-				// Sound became inaudible - stop playing
-				try {
-
-					ch._audioSource.stop();
-
-				} catch ( e ) { /* ignore */ }
-
-				ch._audioSource = null;
-				ch._gainNode = null;
-				ch._panNode = null;
-
-			} else if ( isAudible && ch._audioSource ) {
-
-				// Update volume and panning for playing static sound
+				// Audio nodes exist - just update volume/panning
 				_updateWebAudioSpatial( ch );
 
 			}

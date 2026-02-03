@@ -147,7 +147,7 @@ CL_ParseStartSoundPacket
 */
 export function CL_ParseStartSoundPacket() {
 
-	const pos = new Float32Array( 3 );
+	const pos = _soundPos;
 
 	const field_mask = MSG_ReadByte();
 
@@ -472,6 +472,15 @@ Ported from: QW/client/cl_ents.c
 */
 function CL_ParsePacketEntities( delta ) {
 
+	// First entity update completes the signon process
+	// (same as CL_ParseUpdate does for NQ-style updates)
+	if ( cls.signon === SIGNONS - 1 ) {
+
+		cls.signon = SIGNONS;
+		CL_SignonReply();
+
+	}
+
 	const seq = CL_GetServerSequence();
 	const eframe = CL_GetEntityFrame( seq );
 	const newp = eframe.packet_entities;
@@ -658,6 +667,10 @@ relinked. Other attributes can change without relinking.
 ==================
 */
 const bitcounts = new Int32Array( 16 );
+
+// Reusable vectors for per-frame parsing (avoid per-call allocations)
+const _soundPos = new Float32Array( 3 );
+const _staticSoundOrg = new Float32Array( 3 );
 
 export function CL_ParseUpdate( bits ) {
 
@@ -1130,7 +1143,7 @@ CL_ParseStaticSound
 */
 export function CL_ParseStaticSound() {
 
-	const org = new Float32Array( 3 );
+	const org = _staticSoundOrg;
 	for ( let i = 0; i < 3; i ++ )
 		org[ i ] = MSG_ReadCoord();
 	const sound_num = MSG_ReadByte();

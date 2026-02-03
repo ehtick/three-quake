@@ -238,50 +238,65 @@ Returns the sequence number, or -1 if not found.
 =================
 */
 export function CL_FindAcknowledgedSequence( currentTime ) {
-	// Estimate RTT: start with a reasonable default and adjust
-	// based on observed command roundtrip
-	// For local play, RTT is ~0. For internet, typically 50-200ms.
-	const estimatedRTT = cls_latency > 0 ? cls_latency : 0.1; // Default 100ms
 
-	// Commands sent before this time should be acknowledged
-	const ackTime = currentTime - estimatedRTT;
-
-	let bestSeq = -1;
+	// Measure latency: find the most recent command we sent before
+	// this server update. The time between sending that command and
+	// receiving the server response approximates RTT + server tick.
 	const searchStart = outgoing_sequence - 1;
 	const searchEnd = Math.max( 0, outgoing_sequence - UPDATE_BACKUP + 1 );
 
-	// Find the most recent command that was sent before ackTime
-	for ( let seq = searchStart; seq >= searchEnd; seq-- ) {
+	// The most recently sent command before this server response
+	let bestSeq = - 1;
+	for ( let seq = searchStart; seq >= searchEnd; seq -- ) {
+
 		const frame = frames[ seq & UPDATE_MASK ];
-		if ( frame.senttime > 0 && frame.senttime <= ackTime ) {
+		if ( frame.senttime > 0 && frame.senttime <= currentTime ) {
+
 			bestSeq = seq;
 			break;
+
 		}
+
 	}
 
 	// If we didn't find anything but have commands in flight,
 	// acknowledge at least some to prevent buffer overflow
 	if ( bestSeq < 0 && outgoing_sequence > UPDATE_BACKUP / 2 ) {
+
 		bestSeq = outgoing_sequence - UPDATE_BACKUP / 2;
+
 	}
 
-	// Update latency estimate based on oldest unacknowledged command
+	// Update latency from the oldest unacknowledged command
+	// This command was sent before the server generated this response,
+	// so (currentTime - senttime) >= true RTT
 	if ( bestSeq >= 0 ) {
+
 		const ackFrame = frames[ bestSeq & UPDATE_MASK ];
 		if ( ackFrame.senttime > 0 ) {
+
 			const observedRTT = currentTime - ackFrame.senttime;
-			if ( observedRTT > 0 && observedRTT < 1.0 ) {
-				// Smoothly adjust latency estimate
-				if ( observedRTT < cls_latency ) {
+			if ( observedRTT >= 0 && observedRTT < 2.0 ) {
+
+				// Exponential moving average
+				if ( cls_latency <= 0 ) {
+
 					cls_latency = observedRTT;
+
 				} else {
-					cls_latency += 0.001; // Drift up slowly
+
+					cls_latency = cls_latency * 0.75 + observedRTT * 0.25;
+
 				}
+
 			}
+
 		}
+
 	}
 
 	return bestSeq;
+
 }
 
 /*
@@ -562,6 +577,34 @@ export function CL_SetPlayerInfo( playernum, origin, velocity, frame, flags, ski
 		pplayer.cmd.upmove = cmd.upmove;
 		pplayer.cmd.buttons = cmd.buttons;
 		pplayer.cmd.impulse = cmd.impulse;
+	}
+
+	// If this is the local player, bridge QW-style svc_playerinfo data
+	// into the NQ-style entity system. Players are excluded from
+	// svc_packetentities, so cl_entities[viewentity] is never updated
+	// by entity updates. Without this, the NQ camera (V_CalcRefdef)
+	// reads stale [0,0,0] from the entity.
+	if ( playernum + 1 === cl.viewentity ) {
+
+		const ent = cl_entities[ cl.viewentity ];
+
+		// Update entity origin directly — V_CalcRefdef reads ent.origin
+		// for the camera position in single player (sv.active).
+		// CL_RelinkEntities may skip this entity (null model), so we
+		// can't rely on it to interpolate msg_origins into ent.origin.
+		VectorCopy( origin, ent.origin );
+
+		// Also update msg_origins for interpolation if CL_RelinkEntities
+		// does process the entity (e.g., after model is set)
+		VectorCopy( ent.msg_origins[ 0 ], ent.msg_origins[ 1 ] );
+		VectorCopy( origin, ent.msg_origins[ 0 ] );
+
+		// Update msgtime so CL_RelinkEntities doesn't cull the entity
+		ent.msgtime = cl.mtime[ 0 ];
+
+		// Update prediction frame for CL_PredictMove (multiplayer path)
+		CL_SetServerState( origin, velocity, cl.onground );
+
 	}
 }
 

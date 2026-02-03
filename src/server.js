@@ -131,6 +131,7 @@ export class client_t {
 
 		// client known data for deltas
 		this.old_frags = 0;
+		this.old_ping = 0;
 
 		// QW-style delta compression
 		this.delta_sequence = - 1; // -1 = no compression

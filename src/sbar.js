@@ -4,7 +4,6 @@ import { Cmd_AddCommand } from './cmd.js';
 import { realtime } from './host.js';
 import { Con_Printf } from './console.js';
 import { Draw_GetUIScale } from './gl_draw.js';
-import { CL_GetLatency } from './cl_pred.js';
 import {
 	IT_SHOTGUN, IT_SUPER_SHOTGUN, IT_NAILGUN, IT_SUPER_NAILGUN,
 	IT_GRENADE_LAUNCHER, IT_ROCKET_LAUNCHER, IT_LIGHTNING, IT_SUPER_LIGHTNING,
@@ -15,7 +14,7 @@ import {
 	STAT_HEALTH, STAT_FRAGS, STAT_WEAPON, STAT_AMMO, STAT_ARMOR,
 	STAT_SHELLS, STAT_NAILS, STAT_ROCKETS, STAT_CELLS,
 	STAT_ACTIVEWEAPON, STAT_TOTALSECRETS, STAT_TOTALMONSTERS,
-	STAT_SECRETS, STAT_MONSTERS,
+	STAT_SECRETS, STAT_MONSTERS, STAT_PING,
 	MAX_SCOREBOARD,
 	HIT_PROXIMITY_GUN_BIT, HIT_MJOLNIR_BIT, HIT_LASER_CANNON_BIT,
 	HIT_PROXIMITY_GUN, HIT_MJOLNIR, HIT_LASER_CANNON, HIT_WETSUIT, HIT_EMPATHY_SHIELDS,
@@ -817,8 +816,7 @@ function Sbar_DrawPing() {
 
 	if ( _Draw_Character == null ) return;
 
-	const latency = CL_GetLatency();
-	const pingMs = Math.round( latency * 1000 );
+	const pingMs = _cl.stats[ STAT_PING ];
 	const str = pingMs + 'ms';
 
 	// Draw in top-right corner

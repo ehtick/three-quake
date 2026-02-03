@@ -11,7 +11,8 @@ import {
 import { Cmd_AddCommand, Cmd_ExecuteString, Cbuf_AddText, Cbuf_InsertText, src_command } from './cmd.js';
 import { cvar_t, Cvar_RegisterVariable, Cvar_Set, Cvar_SetValue } from './cvar.js';
 import {
-	MAX_MODELS, MAX_SOUNDS, MAX_DATAGRAM, MAX_EDICTS, MAX_MSGLEN
+	MAX_MODELS, MAX_SOUNDS, MAX_DATAGRAM, MAX_EDICTS, MAX_MSGLEN,
+	STAT_PING
 } from './quakedef.js';
 import {
 	PROTOCOL_VERSION,
@@ -19,7 +20,7 @@ import {
 	DEFAULT_SOUND_PACKET_VOLUME, DEFAULT_SOUND_PACKET_ATTENUATION,
 	SND_VOLUME, SND_ATTENUATION,
 	svc_print, svc_serverinfo, svc_cdtrack, svc_setview, svc_signonnum,
-	svc_time, svc_particle, svc_sound, svc_clientdata, svc_updatefrags,
+	svc_time, svc_particle, svc_sound, svc_clientdata, svc_updatestat, svc_updatefrags,
 	svc_stufftext, svc_nop, svc_spawnbaseline, svc_disconnect,
 	svc_updatename, svc_updatecolors,
 	U_MOREBITS, U_ORIGIN1, U_ORIGIN2, U_ORIGIN3,
@@ -39,7 +40,7 @@ import {
 } from './protocol.js';
 import {
 	sv, svs, ss_loading, ss_active,
-	server_t, client_t,
+	server_t, client_t, NUM_PING_TIMES,
 	host_client, set_host_client,
 	host_time,
 	MOVETYPE_PUSH, MOVETYPE_STEP,
@@ -1235,6 +1236,29 @@ function SV_SendClientDatagram( client ) {
 	MSG_WriteLong( _scdMsg, client.outgoing_sequence );
 
 	SV_WriteClientdataToMessage( client.edict, _scdMsg );
+
+	// Send ping stat (average of recent ping samples, in milliseconds)
+	if ( client.num_pings > 0 ) {
+
+		let totalPing = 0;
+		const count = Math.min( client.num_pings, NUM_PING_TIMES );
+		for ( let i = 0; i < count; i ++ ) {
+
+			totalPing += client.ping_times[ i ];
+
+		}
+
+		const pingMs = Math.round( ( totalPing / count ) * 1000 );
+		if ( pingMs !== client.old_ping ) {
+
+			MSG_WriteByte( _scdMsg, svc_updatestat );
+			MSG_WriteByte( _scdMsg, STAT_PING );
+			MSG_WriteLong( _scdMsg, pingMs );
+			client.old_ping = pingMs;
+
+		}
+
+	}
 
 	// Send player info for other players (QuakeWorld-style prediction)
 	VectorAdd( client.edict.v.origin, client.edict.v.view_ofs, _scdOrg );
