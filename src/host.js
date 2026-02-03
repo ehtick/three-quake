@@ -52,6 +52,7 @@ import { vid, d_8to24table, renderer } from './vid.js';
 import { V_RenderView, V_UpdatePalette } from './view.js';
 import { S_LocalSound } from './snd_dma.js';
 import { M_Menu_Main_f } from './menu.js';
+import { Debug_Init } from './debug_overlay.js';
 
 /*
 
@@ -377,6 +378,7 @@ export async function Host_Init( parms ) {
 
 	SCR_Init();
 	R_Init();
+	Debug_Init();
 	S_Init();
 	S_SetCallbacks( {
 		getHostFrametime: () => host_frametime
