@@ -283,9 +283,23 @@ R_TranslatePlayerSkin
 
 Translates a skin texture by the per-player color lookup.
 For Three.js, builds a new texture with translated colors.
+Stores the result in _playerSkinTextures[playernum] for gl_mesh.js to use.
 ===============
 */
+
+const MAX_SCOREBOARD = 16;
+const _playerSkinTextures = new Array( MAX_SCOREBOARD ).fill( null );
+
+export function R_GetPlayerSkinTexture( playernum ) {
+
+	return _playerSkinTextures[ playernum ];
+
+}
+
 export function R_TranslatePlayerSkin( playernum ) {
+
+	if ( cl.scores == null || cl.scores[ playernum ] == null )
+		return;
 
 	const top = cl.scores[ playernum ].colors & 0xf0;
 	const bottom = ( cl.scores[ playernum ].colors & 15 ) << 4;
@@ -315,22 +329,25 @@ export function R_TranslatePlayerSkin( playernum ) {
 	// locate the original skin pixels
 	//
 	const entity = cl_entities[ 1 + playernum ];
-	if ( ! entity || ! entity.model )
-		return null; // player doesn't have a model yet
+	if ( entity == null || entity.model == null )
+		return; // player doesn't have a model yet
 
 	const model = entity.model;
 	if ( model.type !== 'mod_alias' )
-		return null; // only translate skins on alias models
+		return; // only translate skins on alias models
 
-	const paliashdr = model.aliashdr;
-	if ( ! paliashdr )
-		return null;
+	const paliashdr = model.cache != null ? model.cache.data : null;
+	if ( paliashdr == null )
+		return;
+
+	const skinnum = ( entity.skinnum >= 0 && entity.skinnum < paliashdr.numskins )
+		? entity.skinnum : 0;
+	const original = paliashdr.texels[ skinnum ];
+	if ( original == null )
+		return;
 
 	const inwidth = paliashdr.skinwidth;
 	const inheight = paliashdr.skinheight;
-	const original = paliashdr.skindata;
-	if ( ! original )
-		return null;
 
 	// Build translated 32-bit pixels
 	const translate32 = new Uint32Array( 256 );
@@ -361,12 +378,20 @@ export function R_TranslatePlayerSkin( playernum ) {
 
 	}
 
+	// Dispose previous translated texture for this player
+	if ( _playerSkinTextures[ playernum ] != null ) {
+
+		_playerSkinTextures[ playernum ].dispose();
+
+	}
+
 	const texture = new THREE.DataTexture( pixels, scaled_width, scaled_height, THREE.RGBAFormat );
 	texture.magFilter = THREE.LinearFilter;
 	texture.minFilter = THREE.LinearFilter;
+	texture.colorSpace = THREE.SRGBColorSpace;
 	texture.needsUpdate = true;
 
-	return texture;
+	_playerSkinTextures[ playernum ] = texture;
 
 }
 

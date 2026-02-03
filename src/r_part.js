@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { VectorCopy, VectorSubtract, VectorNormalize, VectorAdd, vec3_origin } from './mathlib.js';
+import { r_avertexnormals } from './anorm_dots.js';
 import { d_8to24table } from './vid.js';
 import { cl as client_cl } from './client.js';
 import { gl_texturemode, GL_RegisterTexture } from './glquake.js';
@@ -556,11 +557,64 @@ export function R_RocketTrail( start, end, type ) {
 /*
 ===============
 R_EntityParticles
+
+Glowing particle aura around entities with EF_BRIGHTFIELD (e.g. Quad Damage)
 ===============
 */
+
+const NUMVERTEXNORMALS = 162;
+const avelocities = new Array( NUMVERTEXNORMALS );
+let _avelocitiesInitialized = false;
+const _epForward = new Float32Array( 3 );
+const beamlength = 16;
+
 export function R_EntityParticles( ent ) {
 
-	// Simplified entity particle halo — not critical for gameplay
+	if ( client_cl == null ) return;
+
+	const dist = 64;
+
+	if ( ! _avelocitiesInitialized ) {
+
+		for ( let i = 0; i < NUMVERTEXNORMALS; i ++ ) {
+
+			avelocities[ i ] = new Float32Array( 3 );
+			avelocities[ i ][ 0 ] = ( Math.random() * 256 | 0 ) * 0.01;
+			avelocities[ i ][ 1 ] = ( Math.random() * 256 | 0 ) * 0.01;
+			avelocities[ i ][ 2 ] = ( Math.random() * 256 | 0 ) * 0.01;
+
+		}
+
+		_avelocitiesInitialized = true;
+
+	}
+
+	for ( let i = 0; i < NUMVERTEXNORMALS; i ++ ) {
+
+		let angle = client_cl.time * avelocities[ i ][ 0 ];
+		const sy = Math.sin( angle );
+		const cy = Math.cos( angle );
+		angle = client_cl.time * avelocities[ i ][ 1 ];
+		const sp = Math.sin( angle );
+		const cp = Math.cos( angle );
+		angle = client_cl.time * avelocities[ i ][ 2 ];
+
+		_epForward[ 0 ] = cp * cy;
+		_epForward[ 1 ] = cp * sy;
+		_epForward[ 2 ] = - sp;
+
+		const p = allocParticle();
+		if ( p == null ) return;
+
+		p.die = client_cl.time + 0.01;
+		p.color = 0x6f;
+		p.type = pt_explode;
+
+		p.org[ 0 ] = ent.origin[ 0 ] + r_avertexnormals[ i ][ 0 ] * dist + _epForward[ 0 ] * beamlength;
+		p.org[ 1 ] = ent.origin[ 1 ] + r_avertexnormals[ i ][ 1 ] * dist + _epForward[ 1 ] * beamlength;
+		p.org[ 2 ] = ent.origin[ 2 ] + r_avertexnormals[ i ][ 2 ] * dist + _epForward[ 2 ] * beamlength;
+
+	}
 
 }
 

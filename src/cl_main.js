@@ -25,7 +25,7 @@ import { SIGNONS, MAX_DLIGHTS, MAX_EFRAGS, MAX_BEAMS, MAX_TEMP_ENTITIES,
 	client_state_t, usercmd_t, cshift_t,
 	NUM_CSHIFTS } from './client.js';
 import { anglemod, VectorCopy, VectorSubtract, VectorMA, AngleVectors, DotProduct } from './mathlib.js';
-import { R_RocketTrail, R_RemoveEfrags } from './render.js';
+import { R_RocketTrail, R_RemoveEfrags, R_EntityParticles } from './render.js';
 import { CL_InitTEnts, CL_UpdateTEnts } from './cl_tent.js';
 import { host_frametime, realtime, host_framecount, Host_Error, Host_EndGame, sv } from './host.js';
 import { SCR_EndLoadingPlaque, SCR_BeginLoadingPlaque } from './gl_screen.js';
@@ -146,8 +146,12 @@ export function CL_ClearState() {
 
 	}
 
-	for ( let i = 0; i < MAX_EDICTS; i ++ )
+	for ( let i = 0; i < MAX_EDICTS; i ++ ) {
+
 		cl_entities[ i ] = new entity_t();
+		cl_entities[ i ]._entityIndex = i;
+
+	}
 
 	for ( let i = 0; i < MAX_DLIGHTS; i ++ )
 		cl_dlights[ i ] = new dlight_t();
@@ -621,6 +625,14 @@ function CL_LinkPacketEntities() {
 			continue;
 
 		// spawn light flashes, even ones coming from invisible objects
+		if ( s1.effects & 0x0001 ) { // EF_BRIGHTFIELD
+
+			// Need entity origin — use cl_entities entry which has previous frame's origin
+			const bfEnt = cl_entities[ s1.number ];
+			R_EntityParticles( bfEnt );
+
+		}
+
 		if ( s1.effects & 0x0004 ) { // EF_BRIGHTLIGHT
 
 			const dl = CL_AllocDlight( s1.number );
@@ -933,6 +945,9 @@ export function CL_RelinkEntities() {
 		// rotate binary objects locally
 		if ( ent.model != null && ( ent.model.flags & 0x0004 ) ) // EF_ROTATE
 			ent.angles[ 1 ] = bobjrotate;
+
+		if ( ent.effects & 0x0001 ) // EF_BRIGHTFIELD
+			R_EntityParticles( ent );
 
 		if ( ent.effects & 0x0002 ) { // EF_MUZZLEFLASH
 

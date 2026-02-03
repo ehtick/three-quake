@@ -662,10 +662,10 @@ function R_DrawAliasModel( e ) {
 			shadelight = 192 - ambientlight;
 
 		// ZOID: never allow players to go totally black
-		if ( cl_entities && cl.maxclients ) {
+		if ( cl_entities != null && cl.maxclients > 0 ) {
 
-			const idx = cl_entities.indexOf( e );
-			if ( idx >= 1 && idx <= cl.maxclients ) {
+			const idx = e._entityIndex;
+			if ( idx !== undefined && idx >= 1 && idx <= cl.maxclients ) {
 
 				if ( ambientlight < 8 )
 					ambientlight = shadelight = 8;
@@ -873,8 +873,8 @@ export function R_PolyBlend() {
 
 	}
 
-	// update blend color
-	polyBlendMesh.material.color.setRGB( v_blend[ 0 ], v_blend[ 1 ], v_blend[ 2 ] );
+	// update blend color (values are sRGB from Quake's palette, tell Three.js to convert)
+	polyBlendMesh.material.color.setRGB( v_blend[ 0 ], v_blend[ 1 ], v_blend[ 2 ], THREE.SRGBColorSpace );
 	polyBlendMesh.material.opacity = v_blend[ 3 ];
 
 	renderer.render( polyBlendScene, polyBlendCamera );
@@ -963,14 +963,15 @@ export function R_RenderView() {
 	// render mirror view
 	R_Mirror();
 
-	R_PolyBlend();
-
 	// Present the frame via Three.js
 	if ( renderer && scene && camera ) {
 
 		renderer.render( scene, camera );
 
 	}
+
+	// Draw screen blend overlay AFTER main scene (damage flash, powerups, underwater tint)
+	R_PolyBlend();
 
 	// Clean up water meshes AFTER rendering (they need to exist during render)
 	R_CleanupWaterMeshes_rsurf();

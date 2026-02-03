@@ -11,6 +11,7 @@ import { Cvar_RegisterVariable, Cvar_Set } from './cvar.js';
 import { Cmd_AddCommand } from './cmd.js';
 import { key_dest, key_game, key_console, key_message } from './keys.js';
 import { realtime, host_frametime } from './host.js';
+import { renderer } from './vid.js';
 import { r_refdef as _r_refdef_canonical } from './render.js';
 
 /*
@@ -697,10 +698,43 @@ function SCR_TileClear() {
 SCR_ScreenShot_f
 ==============
 */
+let _screenshotPending = false;
+
 function SCR_ScreenShot_f() {
 
-	// In browser, use canvas.toDataURL()
-	Con_Printf( 'Screenshot: not implemented in browser\n' );
+	_screenshotPending = true;
+	Con_Printf( 'Capturing screenshot...\n' );
+
+}
+
+function SCR_DoScreenShot() {
+
+	if ( renderer == null ) {
+
+		Con_Printf( 'Screenshot: renderer not initialized\n' );
+		return;
+
+	}
+
+	const canvas = renderer.domElement;
+
+	try {
+
+		// toDataURL is synchronous — reads the buffer before it's cleared
+		const dataURL = canvas.toDataURL( 'image/png' );
+
+		const link = document.createElement( 'a' );
+		link.download = 'quake_screenshot.png';
+		link.href = dataURL;
+		link.click();
+
+		Con_Printf( 'Screenshot saved\n' );
+
+	} catch ( e ) {
+
+		Con_Printf( 'Screenshot failed: ' + e.message + '\n' );
+
+	}
 
 }
 
@@ -869,5 +903,13 @@ export function SCR_UpdateScreen() {
 
 	// GL_EndRendering
 	if ( _GL_EndRendering ) _GL_EndRendering();
+
+	// Capture screenshot after render, while draw buffer is still valid
+	if ( _screenshotPending ) {
+
+		_screenshotPending = false;
+		SCR_DoScreenShot();
+
+	}
 
 }

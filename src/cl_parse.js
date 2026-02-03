@@ -727,7 +727,7 @@ export function CL_ParseUpdate( bits ) {
 		ent.model = model;
 		// automatic animation (torches, etc) can be either all together
 		// or randomized
-		if ( model ) {
+		if ( model != null ) {
 
 			if ( model.synctype === 1 ) // ST_RAND
 				ent.syncbase = ( Math.random() * 0x7fff | 0 ) / 0x7fff;
@@ -736,6 +736,9 @@ export function CL_ParseUpdate( bits ) {
 
 		} else
 			forcelink = true; // hack to make null model players work
+
+		if ( num > 0 && num <= cl.maxclients )
+			R_TranslatePlayerSkin( num - 1 );
 
 	}
 
@@ -772,8 +775,8 @@ export function CL_ParseUpdate( bits ) {
 	if ( skin !== ent.skinnum ) {
 
 		ent.skinnum = skin;
-		// if ( num > 0 && num <= cl.maxclients )
-		//     R_TranslatePlayerSkin( num - 1 );
+		if ( num > 0 && num <= cl.maxclients )
+			R_TranslatePlayerSkin( num - 1 );
 
 	}
 
