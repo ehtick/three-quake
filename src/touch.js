@@ -329,13 +329,13 @@ function onTouchStart( e ) {
 
 			in_attack.state |= 1 + 2; // down + impulse down
 			fireButton.style.background = 'rgba(255, 100, 100, 0.5)';
-			if ( navigator.vibrate ) navigator.vibrate( 30 );
+			if ( typeof navigator.vibrate === 'function' ) navigator.vibrate( 50 );
 
 		} else if ( target === jumpButton ) {
 
 			in_jump.state |= 1 + 2; // down + impulse down
 			jumpButton.style.background = 'rgba(100, 150, 255, 0.5)';
-			if ( navigator.vibrate ) navigator.vibrate( 30 );
+			if ( typeof navigator.vibrate === 'function' ) navigator.vibrate( 50 );
 
 		} else if ( target === pauseButton ) {
 
