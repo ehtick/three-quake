@@ -33,7 +33,7 @@ let jumpImpulse = false;
 // Gyroscope state
 let gyroEnabled = false;
 let gyroPermissionRequested = false;
-const GYRO_SENSITIVITY = 0.15;
+const GYRO_SENSITIVITY = 1.0;
 
 // UI elements
 let overlay = null;
@@ -468,11 +468,11 @@ function onDeviceMotion( e ) {
 	// Convert to per-frame delta using the sample interval
 	const dt = ( e.interval || 16 ) / 1000;
 
-	// In landscape, the device axes are rotated 90 degrees:
-	// - rate.alpha (Z-axis spin) = yaw (looking left/right)
-	// - rate.beta (X-axis tilt) = pitch (looking up/down)
-	if ( rate.alpha !== null ) lookDeltaX += rate.alpha * dt * GYRO_SENSITIVITY;
-	if ( rate.beta !== null ) lookDeltaY += rate.beta * dt * GYRO_SENSITIVITY;
+	// In landscape, device axes are rotated 90 degrees from portrait:
+	// - rate.beta (portrait X-axis) is now vertical = yaw (looking left/right)
+	// - rate.gamma (portrait Y-axis) is now horizontal = pitch (looking up/down)
+	if ( rate.beta !== null ) lookDeltaX += rate.beta * dt * GYRO_SENSITIVITY;
+	if ( rate.gamma !== null ) lookDeltaY -= rate.gamma * dt * GYRO_SENSITIVITY;
 
 }
 
