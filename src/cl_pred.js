@@ -1,17 +1,39 @@
 // Ported from: QuakeWorld/client/cl_pred.c
 // Client-side prediction for smooth movement with low server tick rates
 
-import { VectorCopy, VectorSubtract } from './mathlib.js';
+import { VectorCopy, VectorSubtract, VectorMA } from './mathlib.js';
 import { cvar_t, Cvar_RegisterVariable } from './cvar.js';
-import { pmove, movevars, PlayerMove, PM_HullPointContents, Pmove_Init } from './pmove.js';
+import { pmove, movevars, PlayerMove, PM_HullPointContents, PM_GetOnGround, Pmove_Init,
+	player_mins, player_maxs } from './pmove.js';
 import { CONTENTS_EMPTY } from './bspfile.js';
-import { cl, cls, ca_connected } from './client.js';
+import { cl, cls, ca_connected, cl_entities } from './client.js';
 import { STAT_HEALTH } from './quakedef.js';
 import { realtime, sv } from './host.js';
 
 // CVars
 export const cl_nopred = new cvar_t( 'cl_nopred', '0' );
 export const cl_pushlatency = new cvar_t( 'pushlatency', '-999' );
+export const cl_solid_players = new cvar_t( 'cl_solid_players', '1' );
+export const cl_predict_players = new cvar_t( 'cl_predict_players', '1' );
+
+// Predicted player structure (for other players)
+class predicted_player_t {
+	constructor() {
+		this.active = false;
+		this.origin = new Float32Array( 3 ); // Predicted origin
+		this.velocity = new Float32Array( 3 ); // Last known velocity
+		this.angles = new Float32Array( 3 );
+		this.modelindex = 0;
+		this.msgtime = 0; // Last update time
+	}
+}
+
+// Array of predicted players (indices 1-maxclients are players)
+const MAX_CLIENTS = 16;
+const predicted_players = [];
+for ( let i = 0; i < MAX_CLIENTS; i++ ) {
+	predicted_players.push( new predicted_player_t() );
+}
 
 // Command buffer for prediction
 const UPDATE_BACKUP = 64; // Must be power of 2
@@ -70,6 +92,7 @@ let incoming_sequence = 0; // Last acknowledged command from server
 export const cl_simorg = new Float32Array( 3 ); // Simulated/predicted origin
 export const cl_simvel = new Float32Array( 3 ); // Simulated/predicted velocity
 export const cl_simangles = new Float32Array( 3 ); // Simulated angles
+export let cl_simonground = -1; // Predicted onground state: -1 = in air, >= 0 = on ground
 
 // Estimated latency for timing
 let cls_latency = 0;
@@ -107,6 +130,63 @@ export function CL_AcknowledgeCommand( sequence ) {
 
 /*
 =================
+CL_FindAcknowledgedSequence
+
+Find which command sequence corresponds to the server update.
+When we receive a server update at `currentTime`, we acknowledge commands
+that were sent more than RTT ago.
+Returns the sequence number, or -1 if not found.
+=================
+*/
+export function CL_FindAcknowledgedSequence( currentTime ) {
+	// Estimate RTT: start with a reasonable default and adjust
+	// based on observed command roundtrip
+	// For local play, RTT is ~0. For internet, typically 50-200ms.
+	const estimatedRTT = cls_latency > 0 ? cls_latency : 0.1; // Default 100ms
+
+	// Commands sent before this time should be acknowledged
+	const ackTime = currentTime - estimatedRTT;
+
+	let bestSeq = -1;
+	const searchStart = outgoing_sequence - 1;
+	const searchEnd = Math.max( 0, outgoing_sequence - UPDATE_BACKUP + 1 );
+
+	// Find the most recent command that was sent before ackTime
+	for ( let seq = searchStart; seq >= searchEnd; seq-- ) {
+		const frame = frames[ seq & UPDATE_MASK ];
+		if ( frame.senttime > 0 && frame.senttime <= ackTime ) {
+			bestSeq = seq;
+			break;
+		}
+	}
+
+	// If we didn't find anything but have commands in flight,
+	// acknowledge at least some to prevent buffer overflow
+	if ( bestSeq < 0 && outgoing_sequence > UPDATE_BACKUP / 2 ) {
+		bestSeq = outgoing_sequence - UPDATE_BACKUP / 2;
+	}
+
+	// Update latency estimate based on oldest unacknowledged command
+	if ( bestSeq >= 0 ) {
+		const ackFrame = frames[ bestSeq & UPDATE_MASK ];
+		if ( ackFrame.senttime > 0 ) {
+			const observedRTT = currentTime - ackFrame.senttime;
+			if ( observedRTT > 0 && observedRTT < 1.0 ) {
+				// Smoothly adjust latency estimate
+				if ( observedRTT < cls_latency ) {
+					cls_latency = observedRTT;
+				} else {
+					cls_latency += 0.001; // Drift up slowly
+				}
+			}
+		}
+	}
+
+	return bestSeq;
+}
+
+/*
+=================
 CL_StoreCommand
 
 Store a command for prediction replay
@@ -132,6 +212,80 @@ export function CL_StoreCommand( cmd, senttime ) {
 
 /*
 =================
+CL_SetUpPlayerPrediction
+
+Calculate predicted positions for all other players.
+This extrapolates their position forward based on their last known velocity.
+Ported from QuakeWorld cl_ents.c
+=================
+*/
+export function CL_SetUpPlayerPrediction( dopred ) {
+	// Calculate player time - slightly ahead to compensate for latency
+	let playertime = realtime - cls_latency + 0.02;
+	if ( playertime > realtime )
+		playertime = realtime;
+
+	// Process all potential player slots
+	for ( let j = 1; j <= cl.maxclients && j < MAX_CLIENTS; j++ ) {
+		const pplayer = predicted_players[ j ];
+		pplayer.active = false;
+
+		const ent = cl_entities[ j ];
+
+		// Skip if entity wasn't updated recently
+		if ( ent.msgtime <= 0 )
+			continue;
+
+		// Skip if no model (dead or not spawned)
+		if ( ent.model == null )
+			continue;
+
+		pplayer.active = true;
+		pplayer.modelindex = ent.model != null ? 1 : 0;
+		pplayer.msgtime = ent.msgtime;
+		VectorCopy( ent.angles, pplayer.angles );
+
+		// For the local player, use our predicted position
+		if ( j === cl.viewentity ) {
+			VectorCopy( cl_simorg, pplayer.origin );
+			VectorCopy( cl_simvel, pplayer.velocity );
+		} else {
+			// For other players, extrapolate based on velocity
+			// Calculate time since last update
+			const dt = playertime - ent.msgtime;
+
+			if ( dt <= 0 || cl_predict_players.value === 0 || ! dopred ) {
+				// No prediction - use last known position
+				VectorCopy( ent.origin, pplayer.origin );
+				// Estimate velocity from position delta
+				VectorSubtract( ent.msg_origins[ 0 ], ent.msg_origins[ 1 ], pplayer.velocity );
+				const msgdt = cl.mtime[ 0 ] - cl.mtime[ 1 ];
+				if ( msgdt > 0 ) {
+					pplayer.velocity[ 0 ] /= msgdt;
+					pplayer.velocity[ 1 ] /= msgdt;
+					pplayer.velocity[ 2 ] /= msgdt;
+				}
+			} else {
+				// Estimate velocity from position delta between last two updates
+				VectorSubtract( ent.msg_origins[ 0 ], ent.msg_origins[ 1 ], pplayer.velocity );
+				const msgdt = cl.mtime[ 0 ] - cl.mtime[ 1 ];
+				if ( msgdt > 0 ) {
+					pplayer.velocity[ 0 ] /= msgdt;
+					pplayer.velocity[ 1 ] /= msgdt;
+					pplayer.velocity[ 2 ] /= msgdt;
+				}
+
+				// Extrapolate position forward
+				// Only predict half the move to minimize overruns (like QuakeWorld)
+				const predictTime = Math.min( dt * 0.5, 0.1 ); // Cap at 100ms
+				VectorMA( ent.origin, predictTime, pplayer.velocity, pplayer.origin );
+			}
+		}
+	}
+}
+
+/*
+=================
 CL_SetupPMove
 
 Set up pmove state for prediction
@@ -147,7 +301,71 @@ function CL_SetupPMove() {
 		pmove.numphysent = 1;
 	}
 
-	// TODO: Add other players as physics entities for collision
+	// Calculate predicted positions for other players first
+	CL_SetUpPlayerPrediction( true );
+
+	// Add other players as physics entities for collision
+	CL_SetSolidPlayers( cl.viewentity );
+}
+
+/*
+=================
+CL_SetSolidPlayers
+
+Add other players as collision entities for prediction.
+Uses predicted positions from CL_SetUpPlayerPrediction().
+Ported from QuakeWorld cl_ents.c
+=================
+*/
+function CL_SetSolidPlayers( playernum ) {
+	if ( cl_solid_players.value === 0 )
+		return;
+
+	// Use predicted player positions
+	for ( let j = 1; j < MAX_CLIENTS; j++ ) {
+		const pplayer = predicted_players[ j ];
+
+		// Skip inactive players
+		if ( ! pplayer.active )
+			continue;
+
+		// Don't add ourselves
+		if ( j === playernum )
+			continue;
+
+		// Add as a solid physics entity using predicted position
+		const pent = pmove.physents[ pmove.numphysent ];
+		pent.model = null; // Use box collision, not BSP
+		VectorCopy( pplayer.origin, pent.origin );
+		VectorCopy( player_mins, pent.mins );
+		VectorCopy( player_maxs, pent.maxs );
+		pent.info = j; // Store player number
+
+		pmove.numphysent++;
+
+		// Don't overflow the physents array
+		if ( pmove.numphysent >= pmove.physents.length )
+			break;
+	}
+}
+
+/*
+=================
+CL_GetPredictedPlayer
+
+Get the predicted position for a player (for rendering).
+Returns null if player is not active.
+=================
+*/
+export function CL_GetPredictedPlayer( playernum ) {
+	if ( playernum < 0 || playernum >= MAX_CLIENTS )
+		return null;
+
+	const pplayer = predicted_players[ playernum ];
+	if ( ! pplayer.active )
+		return null;
+
+	return pplayer;
 }
 
 /*
@@ -228,7 +446,7 @@ export function CL_PredictUsercmd( from, to, cmd, spectator ) {
 	VectorCopy( pmove.origin, to.origin );
 	VectorCopy( pmove.angles, to.viewangles );
 	VectorCopy( pmove.velocity, to.velocity );
-	to.onground = pmove.numtouch > 0; // Simplified onground check
+	to.onground = PM_GetOnGround() !== -1; // Use proper onground from pmove
 
 	to.weaponframe = from.weaponframe;
 }
@@ -268,6 +486,7 @@ export function CL_PredictMove() {
 	if ( cl_nopred.value !== 0 || sv.active ) {
 		VectorCopy( from.playerstate.velocity, cl_simvel );
 		VectorCopy( from.playerstate.origin, cl_simorg );
+		cl_simonground = from.playerstate.onground ? 0 : -1;
 		return;
 	}
 
@@ -307,6 +526,7 @@ export function CL_PredictMove() {
 			// Teleported, so don't lerp
 			VectorCopy( to.playerstate.velocity, cl_simvel );
 			VectorCopy( to.playerstate.origin, cl_simorg );
+			cl_simonground = to.playerstate.onground ? 0 : -1;
 			return;
 		}
 	}
@@ -318,6 +538,9 @@ export function CL_PredictMove() {
 		cl_simvel[ i ] = lastFrom.playerstate.velocity[ i ]
 			+ f * ( to.playerstate.velocity[ i ] - lastFrom.playerstate.velocity[ i ] );
 	}
+
+	// Set predicted onground state (use the latest predicted frame)
+	cl_simonground = to.playerstate.onground ? 0 : -1;
 }
 
 /*
@@ -343,6 +566,8 @@ CL_InitPrediction
 export function CL_InitPrediction() {
 	Cvar_RegisterVariable( cl_pushlatency );
 	Cvar_RegisterVariable( cl_nopred );
+	Cvar_RegisterVariable( cl_solid_players );
+	Cvar_RegisterVariable( cl_predict_players );
 	Pmove_Init();
 }
 
@@ -361,6 +586,7 @@ export function CL_ResetPrediction() {
 	cl_simorg.fill( 0 );
 	cl_simvel.fill( 0 );
 	cl_simangles.fill( 0 );
+	cl_simonground = -1;
 
 	for ( let i = 0; i < UPDATE_BACKUP; i++ ) {
 		frames[ i ].senttime = 0;

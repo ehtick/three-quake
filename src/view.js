@@ -20,7 +20,7 @@ import { R_RenderView } from './gl_rmain.js';
 import { R_PushDlights } from './gl_rlight.js';
 import { con_forcedup } from './console.js';
 import { VID_UpdateGamma } from './vid.js';
-import { cl_simorg, cl_nopred } from './cl_pred.js';
+import { cl_simorg, cl_simvel, cl_simangles, cl_simonground, cl_nopred } from './cl_pred.js';
 
 /*
 
@@ -107,24 +107,37 @@ V_CalcBob
 
 ===============
 */
+let _bobtime = 0;
+let _bob = 0;
+
 export function V_CalcBob() {
 
-	let cycle = cl.time - ( ( cl.time / cl_bobcycle.value ) | 0 ) * cl_bobcycle.value;
+	// QuakeWorld: return 0 if spectator
+	if ( cl.spectator )
+		return 0;
+
+	// QuakeWorld: when in air, keep returning old bob value
+	if ( cl_simonground === -1 )
+		return _bob;
+
+	_bobtime += host_frametime;
+	let cycle = _bobtime - ( ( _bobtime / cl_bobcycle.value ) | 0 ) * cl_bobcycle.value;
 	cycle /= cl_bobcycle.value;
 	if ( cycle < cl_bobup.value )
 		cycle = M_PI * cycle / cl_bobup.value;
 	else
 		cycle = M_PI + M_PI * ( cycle - cl_bobup.value ) / ( 1.0 - cl_bobup.value );
 
-	// bob is proportional to velocity in the xy plane
+	// bob is proportional to SIMULATED velocity in the xy plane
 	// (don't count Z, or jumping messes it up)
-	let bob = Math.sqrt( cl.velocity[ 0 ] * cl.velocity[ 0 ] + cl.velocity[ 1 ] * cl.velocity[ 1 ] ) * cl_bob.value;
-	bob = bob * 0.3 + bob * 0.7 * Math.sin( cycle );
-	if ( bob > 4 )
-		bob = 4;
-	else if ( bob < - 7 )
-		bob = - 7;
-	return bob;
+	// QuakeWorld uses cl.simvel for predicted velocity
+	_bob = Math.sqrt( cl_simvel[ 0 ] * cl_simvel[ 0 ] + cl_simvel[ 1 ] * cl_simvel[ 1 ] ) * cl_bob.value;
+	_bob = _bob * 0.3 + _bob * 0.7 * Math.sin( cycle );
+	if ( _bob > 4 )
+		_bob = 4;
+	else if ( _bob < - 7 )
+		_bob = - 7;
+	return _bob;
 
 }
 
@@ -350,16 +363,16 @@ export function V_ParseDamage() {
 
 	//
 	// calculate view angle kicks
+	// QuakeWorld uses predicted origin and angles for accurate damage kick
 	//
-	const ent = cl_entities[ cl.viewentity ];
 
-	VectorSubtract( from, ent.origin, from );
+	VectorSubtract( from, cl_simorg, from );
 	VectorNormalize( from );
 
 	const forward = new Float32Array( 3 );
 	const right = new Float32Array( 3 );
 	const up = new Float32Array( 3 );
-	AngleVectors( ent.angles, forward, right, up );
+	AngleVectors( cl_simangles, forward, right, up );
 
 	let side = DotProduct( from, right );
 	v_dmg_roll = count * side * v_kickroll.value;
@@ -701,7 +714,8 @@ Roll is induced by movement and damage
 */
 export function V_CalcViewRoll() {
 
-	const side = V_CalcRoll( cl_entities[ cl.viewentity ].angles, cl.velocity );
+	// QuakeWorld uses predicted angles and velocity for roll calculation
+	const side = V_CalcRoll( cl_simangles, cl_simvel );
 	r_refdef.viewangles[ ROLL ] += side;
 
 	if ( v_dmg_time > 0 ) {
@@ -729,13 +743,12 @@ V_CalcIntermissionRefdef
 */
 export function V_CalcIntermissionRefdef() {
 
-	// ent is the player model (visible when out of body)
-	const ent = cl_entities[ cl.viewentity ];
 	// view is the weapon model (only visible from inside body)
 	const view = cl.viewent;
 
-	VectorCopy( ent.origin, r_refdef.vieworg );
-	VectorCopy( ent.angles, r_refdef.viewangles );
+	// QuakeWorld uses predicted origin and angles for intermission view
+	VectorCopy( cl_simorg, r_refdef.vieworg );
+	VectorCopy( cl_simangles, r_refdef.viewangles );
 	view.model = null;
 
 	// allways idle in intermission
@@ -792,16 +805,20 @@ export function V_CalcRefdef() {
 	V_CalcViewRoll();
 	V_AddIdle();
 
-	// offsets
-	const angles = new Float32Array( 3 );
-	angles[ PITCH ] = - ent.angles[ PITCH ]; // because entity pitches are actually backward
-	angles[ YAW ] = ent.angles[ YAW ];
-	angles[ ROLL ] = ent.angles[ ROLL ];
-
+	// offsets - QuakeWorld uses simangles for prediction
 	const forward = new Float32Array( 3 );
 	const right = new Float32Array( 3 );
 	const up = new Float32Array( 3 );
-	AngleVectors( angles, forward, right, up );
+	if ( usePrediction && predictionInitialized ) {
+		AngleVectors( cl_simangles, forward, right, up );
+	} else {
+		// Use entity angles like WinQuake for local play
+		const angles = new Float32Array( 3 );
+		angles[ PITCH ] = - ent.angles[ PITCH ]; // because entity pitches are actually backward
+		angles[ YAW ] = ent.angles[ YAW ];
+		angles[ ROLL ] = ent.angles[ ROLL ];
+		AngleVectors( angles, forward, right, up );
+	}
 
 	for ( let i = 0; i < 3; i ++ )
 		r_refdef.vieworg[ i ] += scr_ofsx.value * forward[ i ]
@@ -810,8 +827,12 @@ export function V_CalcRefdef() {
 
 	V_BoundOffsets( playerorg );
 
-	// set up gun position
-	VectorCopy( cl.viewangles, view.angles );
+	// set up gun position - QuakeWorld uses simangles for prediction
+	if ( usePrediction && predictionInitialized ) {
+		VectorCopy( cl_simangles, view.angles );
+	} else {
+		VectorCopy( cl.viewangles, view.angles );
+	}
 
 	CalcGunAngle();
 
@@ -845,7 +866,9 @@ export function V_CalcRefdef() {
 	VectorAdd( r_refdef.viewangles, cl.punchangle, r_refdef.viewangles );
 
 	// smooth out stair step ups
-	if ( cl.onground && playerorg[ 2 ] - _oldz > 0 ) {
+	// QuakeWorld uses predicted onground state
+	const onGround = ( usePrediction && predictionInitialized ) ? ( cl_simonground !== -1 ) : cl.onground;
+	if ( onGround && playerorg[ 2 ] - _oldz > 0 ) {
 
 		let steptime = cl.time - cl.oldtime;
 		if ( steptime < 0 )

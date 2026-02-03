@@ -48,6 +48,8 @@ import {
 import { VectorCopy } from './mathlib.js';
 import { V_ParseDamage } from './view.js';
 import { Mod_ForName } from './gl_model.js';
+import { CL_SetServerState, CL_AcknowledgeCommand,
+	CL_FindAcknowledgedSequence } from './cl_pred.js';
 import { R_TranslatePlayerSkin } from './gl_rmisc.js';
 import { R_NewMap } from './gl_rmisc.js';
 import { R_ParseParticleEffect, R_AddEfrags } from './render.js';
@@ -656,6 +658,28 @@ export function CL_ParseClientdata( bits ) {
 			// Sbar_Changed();
 
 		}
+
+	}
+
+	//
+	// Update client-side prediction with authoritative server state
+	// This provides the base position/velocity for prediction to build on
+	//
+	if ( cl.viewentity >= 1 && cl.viewentity < cl_entities.length ) {
+
+		// First, acknowledge commands based on timing
+		// This updates incoming_sequence to point to the correct frame
+		const ackSeq = CL_FindAcknowledgedSequence( realtime );
+		if ( ackSeq >= 0 ) {
+
+			CL_AcknowledgeCommand( ackSeq );
+
+		}
+
+		// Then set the server state on the newly acknowledged frame
+		// This provides the base position/velocity for prediction replay
+		const ent = cl_entities[ cl.viewentity ];
+		CL_SetServerState( ent.msg_origins[ 0 ], cl.mvelocity[ 0 ], cl.onground );
 
 	}
 
