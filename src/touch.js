@@ -37,6 +37,7 @@ let joystickBase = null;
 let joystickKnob = null;
 let lookArea = null;
 let fireButton = null;
+let jumpButton = null;
 let pauseButton = null;
 
 /*
@@ -131,14 +132,14 @@ function Touch_CreateUI( container ) {
 		touch-action: none;
 	`;
 
-	// Fire button (bottom right)
+	// Fire button (top right)
 	fireButton = document.createElement( 'div' );
 	fireButton.style.cssText = `
 		position: absolute;
 		right: 20px;
-		bottom: 20px;
-		width: 70px;
-		height: 70px;
+		top: 20px;
+		width: 100px;
+		height: 100px;
 		border-radius: 50%;
 		background: rgba(255, 100, 100, 0.3);
 		border: 2px solid rgba(255, 100, 100, 0.5);
@@ -148,17 +149,39 @@ function Touch_CreateUI( container ) {
 		align-items: center;
 		justify-content: center;
 		font-family: sans-serif;
-		font-size: 12px;
+		font-size: 14px;
 		color: rgba(255, 255, 255, 0.7);
 	`;
 	fireButton.textContent = 'FIRE';
 
-	// Pause button (top right corner)
+	// Jump button (below fire button)
+	jumpButton = document.createElement( 'div' );
+	jumpButton.style.cssText = `
+		position: absolute;
+		right: 20px;
+		top: 140px;
+		width: 100px;
+		height: 100px;
+		border-radius: 50%;
+		background: rgba(100, 150, 255, 0.3);
+		border: 2px solid rgba(100, 150, 255, 0.5);
+		pointer-events: auto;
+		touch-action: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-family: sans-serif;
+		font-size: 14px;
+		color: rgba(255, 255, 255, 0.7);
+	`;
+	jumpButton.textContent = 'JUMP';
+
+	// Pause button (bottom right corner)
 	pauseButton = document.createElement( 'div' );
 	pauseButton.style.cssText = `
 		position: absolute;
 		right: 20px;
-		top: 20px;
+		bottom: 20px;
 		width: 40px;
 		height: 40px;
 		border-radius: 5px;
@@ -179,6 +202,7 @@ function Touch_CreateUI( container ) {
 	overlay.appendChild( joystickArea );
 	overlay.appendChild( lookArea );
 	overlay.appendChild( fireButton );
+	overlay.appendChild( jumpButton );
 	overlay.appendChild( pauseButton );
 
 	container.appendChild( overlay );
@@ -290,6 +314,13 @@ function onTouchStart( e ) {
 
 			in_attack.state |= 1 + 2; // down + impulse down
 			fireButton.style.background = 'rgba(255, 100, 100, 0.5)';
+			if ( navigator.vibrate ) navigator.vibrate( 30 );
+
+		} else if ( target === jumpButton ) {
+
+			in_jump.state |= 1 + 2; // down + impulse down
+			jumpButton.style.background = 'rgba(100, 150, 255, 0.5)';
+			if ( navigator.vibrate ) navigator.vibrate( 30 );
 
 		} else if ( target === pauseButton ) {
 
@@ -384,13 +415,6 @@ function onTouchEnd( e ) {
 
 		} else if ( touch.identifier === lookTouch ) {
 
-			// End look - if barely moved, it was a tap = jump
-			if ( lookTouchDist < 15 ) {
-
-				jumpImpulse = true;
-
-			}
-
 			lookTouch = null;
 
 		} else if ( target === fireButton ) {
@@ -398,6 +422,12 @@ function onTouchEnd( e ) {
 			in_attack.state &= ~1; // up
 			in_attack.state |= 4; // impulse up
 			fireButton.style.background = 'rgba(255, 100, 100, 0.3)';
+
+		} else if ( target === jumpButton ) {
+
+			in_jump.state &= ~1; // up
+			in_jump.state |= 4; // impulse up
+			jumpButton.style.background = 'rgba(100, 150, 255, 0.3)';
 
 		}
 
@@ -560,6 +590,10 @@ export function Touch_Enable() {
 	fireButton.addEventListener( 'touchend', onTouchEnd, { passive: false } );
 	fireButton.addEventListener( 'touchcancel', onTouchEnd, { passive: false } );
 
+	jumpButton.addEventListener( 'touchstart', onTouchStart, { passive: false } );
+	jumpButton.addEventListener( 'touchend', onTouchEnd, { passive: false } );
+	jumpButton.addEventListener( 'touchcancel', onTouchEnd, { passive: false } );
+
 	pauseButton.addEventListener( 'touchstart', onTouchStart, { passive: false } );
 
 }
@@ -592,6 +626,10 @@ export function Touch_Disable() {
 	fireButton.removeEventListener( 'touchstart', onTouchStart );
 	fireButton.removeEventListener( 'touchend', onTouchEnd );
 	fireButton.removeEventListener( 'touchcancel', onTouchEnd );
+
+	jumpButton.removeEventListener( 'touchstart', onTouchStart );
+	jumpButton.removeEventListener( 'touchend', onTouchEnd );
+	jumpButton.removeEventListener( 'touchcancel', onTouchEnd );
 
 	pauseButton.removeEventListener( 'touchstart', onTouchStart );
 

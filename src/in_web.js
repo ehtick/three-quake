@@ -22,7 +22,7 @@ import { V_StopPitchDrift } from './view.js';
 import { PITCH, YAW } from './quakedef.js';
 import {
 	Touch_IsMobile, Touch_Init, Touch_Enable, Touch_Disable, Touch_IsEnabled,
-	Touch_GetMoveInput, Touch_GetLookDelta, Touch_CheckJump,
+	Touch_GetMoveInput, Touch_GetLookDelta,
 	Touch_ShowMenu, Touch_HideMenu, Touch_SetMenuCallback, Touch_RequestFullscreen
 } from './touch.js';
 import { M_TouchInput } from './menu.js';
@@ -670,13 +670,6 @@ export function IN_Move( cmd ) {
 
 		cmd.forwardmove += cl_forwardspeed.value * touchMove.forward;
 		cmd.sidemove += cl_sidespeed.value * touchMove.right;
-
-		// Check for jump from tap
-		if ( Touch_CheckJump() ) {
-
-			in_jump.state |= 1 + 2; // down + impulse down
-
-		}
 
 	}
 
