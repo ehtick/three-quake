@@ -2179,7 +2179,7 @@ export function SV_BroadcastPrintf( fmt, ...args ) {
 	for ( let i = 0; i < svs.maxclients; i ++ ) {
 
 		const client = svs.clients[ i ];
-		if ( ! client || ! client.active ) continue;
+		if ( client == null || ! client.active || ! client.spawned ) continue;
 		MSG_WriteByte( client.message, svc_print );
 		MSG_WriteString( client.message, msg );
 
