@@ -10,7 +10,7 @@ import {
 	hostCacheCount, set_hostCacheCount,
 	hostcache
 } from './net.js';
-import { M_Menu_Main_f } from './menu.js';
+import { M_ConnectionError } from './menu.js';
 import { set_key_dest, key_menu } from './keys.js';
 
 // WebTransport connection state
@@ -606,10 +606,9 @@ export async function WT_Connect( host ) {
 
 				}
 
-				// Return to main menu and show error message
-				M_Menu_Main_f();
+				// Return to Join Game menu with error message
 				set_key_dest( key_menu );
-				Con_Printf( '\nConnection timed out - server may be offline\n\n' );
+				M_ConnectionError( 'Connection timed out - server may be offline' );
 
 				return null;
 
@@ -630,10 +629,9 @@ export async function WT_Connect( host ) {
 
 				}
 
-				// Return to main menu and show error message
-				M_Menu_Main_f();
+				// Return to Join Game menu with error message
 				set_key_dest( key_menu );
-				Con_Printf( '\n%s\n\n', errMsg );
+				M_ConnectionError( errMsg );
 
 				return null;
 

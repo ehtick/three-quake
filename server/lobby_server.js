@@ -278,6 +278,12 @@ async function handleSession( wt, address ) {
 					const errorData = new TextEncoder().encode( errorMsg );
 					await sendFramedMessage( writer, LOBBY_ERROR, errorData );
 					Sys_Printf( 'Room %s not found for %s\n', roomId, address );
+				} else if ( room.playerCount >= room.maxPlayers ) {
+					// Room is full
+					const errorMsg = 'Room is full (' + room.playerCount + '/' + room.maxPlayers + ' players)';
+					const errorData = new TextEncoder().encode( errorMsg );
+					await sendFramedMessage( writer, LOBBY_ERROR, errorData );
+					Sys_Printf( 'Room %s is full (%d/%d) - rejecting %s\n', roomId, room.playerCount, room.maxPlayers, address );
 				} else {
 					// Send room info with port
 					const roomInfo = {
