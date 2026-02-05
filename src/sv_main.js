@@ -1248,6 +1248,14 @@ const _scdBuf = new Uint8Array( MAX_DATAGRAM );
 const _scdMsg = { allowoverflow: false, overflowed: false, data: _scdBuf, maxsize: MAX_DATAGRAM, cursize: 0 };
 const _scdOrg = new Float32Array( 3 );
 
+// Cached buffers for SV_SendNop (avoid per-call allocations)
+const _sendNopBuf = new Uint8Array( 4 );
+const _sendNopMsg = { allowoverflow: false, overflowed: false, data: _sendNopBuf, maxsize: 4, cursize: 0 };
+
+// Cached buffers for SV_SendReconnect (avoid per-call allocations)
+const _sendReconnectBuf = new Uint8Array( 128 );
+const _sendReconnectMsg = { allowoverflow: false, overflowed: false, data: _sendReconnectBuf, maxsize: 128, cursize: 0 };
+
 function SV_SendClientDatagram( client ) {
 
 	_scdMsg.allowoverflow = false;
@@ -1326,12 +1334,12 @@ message buffer
 */
 function SV_SendNop( client ) {
 
-	const buf = new Uint8Array( 4 );
-	const msg = { allowoverflow: false, overflowed: false, data: buf, maxsize: 4, cursize: 0 };
+	// Use cached buffer instead of allocating per-call
+	_sendNopMsg.cursize = 0;
 
-	MSG_WriteChar( msg, svc_nop );
+	MSG_WriteChar( _sendNopMsg, svc_nop );
 
-	if ( NET_SendUnreliableMessage( client.netconnection, msg ) === - 1 )
+	if ( NET_SendUnreliableMessage( client.netconnection, _sendNopMsg ) === - 1 )
 		SV_DropClient( true );
 	client.last_message = realtime;
 
@@ -1469,12 +1477,12 @@ Tell all the clients that the server is changing levels
 */
 function SV_SendReconnect() {
 
-	const buf = new Uint8Array( 128 );
-	const msg = { allowoverflow: false, overflowed: false, data: buf, maxsize: 128, cursize: 0 };
+	// Use cached buffer instead of allocating per-call
+	_sendReconnectMsg.cursize = 0;
 
-	MSG_WriteChar( msg, svc_stufftext );
-	MSG_WriteString( msg, 'reconnect\n' );
-	NET_SendToAll( msg, 5 );
+	MSG_WriteChar( _sendReconnectMsg, svc_stufftext );
+	MSG_WriteString( _sendReconnectMsg, 'reconnect\n' );
+	NET_SendToAll( _sendReconnectMsg, 5 );
 
 	Cbuf_InsertText( 'reconnect\n' );
 
