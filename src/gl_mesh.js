@@ -665,8 +665,8 @@ export function R_DrawAliasModel( entity, paliashdr, shadedots, shadelight ) {
 
 	}
 
-	// When pose changes, swap to the new template's shared attributes
-	if ( entity._aliasPosenum !== posenum ) {
+	// When pose or model changes, swap to the new template's shared attributes
+	if ( entity._aliasPosenum !== posenum || entity._aliasPaliashdr !== paliashdr ) {
 
 		geometry.setAttribute( 'position', template.posAttr );
 		geometry.setAttribute( 'normal', template.normalAttr );
@@ -682,6 +682,7 @@ export function R_DrawAliasModel( entity, paliashdr, shadedots, shadelight ) {
 		}
 
 		entity._aliasPosenum = posenum;
+		entity._aliasPaliashdr = paliashdr;
 
 	}
 
