@@ -55,14 +55,15 @@ import {
 
 function PF_VarString( first ) {
 
-	let out = '';
+	// Use array.join() instead of string concatenation to avoid O(n²) allocations
+	const parts = [];
 	for ( let i = first; i < pr_argc; i ++ ) {
 
-		out += G_STRING( OFS_PARM0 + i * 3 );
+		parts.push( G_STRING( OFS_PARM0 + i * 3 ) );
 
 	}
 
-	return out;
+	return parts.join( '' );
 
 }
 
