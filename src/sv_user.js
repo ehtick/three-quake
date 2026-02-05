@@ -29,6 +29,9 @@ const up = new Float32Array( 3 );
 let wishdir = new Float32Array( 3 );
 let wishspeed = 0;
 
+// Cached buffers to avoid per-frame allocations (Golden Rule #4)
+const _airaccel_wishvel = new Float32Array( 3 );
+
 // world
 let angles = null; // float *
 let origin = null; // float *
@@ -217,24 +220,25 @@ SV_AirAccelerate
 */
 export function SV_AirAccelerate( wishveloc ) {
 
-	const wishvelCopy = new Float32Array( 3 );
-	wishvelCopy[ 0 ] = wishveloc[ 0 ];
-	wishvelCopy[ 1 ] = wishveloc[ 1 ];
-	wishvelCopy[ 2 ] = wishveloc[ 2 ];
+	// Use cached buffer instead of allocating per-call
+	_airaccel_wishvel[ 0 ] = wishveloc[ 0 ];
+	_airaccel_wishvel[ 1 ] = wishveloc[ 1 ];
+	_airaccel_wishvel[ 2 ] = wishveloc[ 2 ];
 
-	let wishspd = VectorNormalize( wishvelCopy );
+	let wishspd = VectorNormalize( _airaccel_wishvel );
 	if ( wishspd > 30 )
 		wishspd = 30;
-	const currentspeed = DotProduct( velocity, wishvelCopy );
+	const currentspeed = DotProduct( velocity, _airaccel_wishvel );
 	const addspeed = wishspd - currentspeed;
 	if ( addspeed <= 0 )
 		return;
-	let accelspeed = sv_accelerate.value * wishspeed * host_frametime;
+	// BUG FIX: was using module-level 'wishspeed' instead of local 'wishspd'
+	let accelspeed = sv_accelerate.value * wishspd * host_frametime;
 	if ( accelspeed > addspeed )
 		accelspeed = addspeed;
 
 	for ( let i = 0; i < 3; i ++ )
-		velocity[ i ] += accelspeed * wishvelCopy[ i ];
+		velocity[ i ] += accelspeed * _airaccel_wishvel[ i ];
 
 }
 
