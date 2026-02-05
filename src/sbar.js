@@ -120,6 +120,7 @@ let _Draw_Character = null;
 let _Draw_String = null;
 let _Draw_Fill = null;
 let _Draw_PicFromWad = null;
+let _Draw_CachePic = null;
 let _hipnotic = false;
 let _rogue = false;
 // realtime is imported live from host.js via the 'realtime' binding
@@ -134,6 +135,7 @@ export function Sbar_SetExternals( externals ) {
 	if ( externals.Draw_String ) _Draw_String = externals.Draw_String;
 	if ( externals.Draw_Fill ) _Draw_Fill = externals.Draw_Fill;
 	if ( externals.Draw_PicFromWad ) _Draw_PicFromWad = externals.Draw_PicFromWad;
+	if ( externals.Draw_CachePic ) _Draw_CachePic = externals.Draw_CachePic;
 	if ( externals.hipnotic !== undefined ) _hipnotic = externals.hipnotic;
 	if ( externals.rogue !== undefined ) _rogue = externals.rogue;
 
@@ -867,31 +869,86 @@ export function Sbar_MiniDeathmatchOverlay() {
 
 /*
 ==================
+Sbar_IntermissionNumber
+
+Draw large numbers for intermission screen
+==================
+*/
+function Sbar_IntermissionNumber( x, y, num, digits, color ) {
+
+	if ( ! _Draw_TransPic ) return;
+
+	const str = String( Math.abs( num ) );
+	let ptr = 0;
+
+	if ( str.length > digits )
+		ptr = str.length - digits;
+	if ( str.length < digits )
+		x += ( digits - str.length ) * 24;
+
+	for ( let i = ptr; i < str.length; i ++ ) {
+
+		const c = str.charCodeAt( i );
+		let frame;
+		if ( c === 45 ) // '-'
+			frame = STAT_MINUS;
+		else
+			frame = c - 48; // '0' is 48
+
+		if ( sb_nums[ color ] && sb_nums[ color ][ frame ] )
+			_Draw_TransPic( x, y, sb_nums[ color ][ frame ] );
+		x += 24;
+
+	}
+
+}
+
+/*
+==================
 Sbar_IntermissionOverlay
 ==================
 */
 export function Sbar_IntermissionOverlay() {
 
-	if ( ! _Draw_Character || ! _Draw_Pic ) return;
+	if ( ! _Draw_TransPic || ! _Draw_CachePic ) return;
 
-	// "Completed" text
-	const completed = 'Completed';
-	for ( let i = 0; i < completed.length; i ++ )
-		_Draw_Character( ( _vid.width / 2 - completed.length * 4 ) + i * 8, 24, completed.charCodeAt( i ) );
+	if ( _cl.gametype === GAME_DEATHMATCH ) {
 
-	// Time / secrets / kills
-	const stats = [
-		'Time: ' + Math.floor( _cl.time / 60 ) + ':' + String( Math.floor( _cl.time ) % 60 ).padStart( 2, '0' ),
-		'Secrets: ' + _cl.stats[ STAT_SECRETS ] + '/' + _cl.stats[ STAT_TOTALSECRETS ],
-		'Kills: ' + _cl.stats[ STAT_MONSTERS ] + '/' + _cl.stats[ STAT_TOTALMONSTERS ],
-	];
-
-	for ( let s = 0; s < stats.length; s ++ ) {
-
-		for ( let i = 0; i < stats[ s ].length; i ++ )
-			_Draw_Character( 64 + i * 8, 56 + s * 16, stats[ s ].charCodeAt( i ) );
+		Sbar_DeathmatchOverlay();
+		return;
 
 	}
+
+	const pic_complete = _Draw_CachePic( 'gfx/complete.lmp' );
+	if ( pic_complete )
+		_Draw_Pic( 64, 24, pic_complete );
+
+	const pic_inter = _Draw_CachePic( 'gfx/inter.lmp' );
+	if ( pic_inter )
+		_Draw_TransPic( 0, 56, pic_inter );
+
+	// time
+	const dig = Math.floor( _cl.completed_time / 60 );
+	Sbar_IntermissionNumber( 160, 64, dig, 3, 0 );
+	const num = Math.floor( _cl.completed_time ) - dig * 60;
+	if ( sb_colon )
+		_Draw_TransPic( 234, 64, sb_colon );
+	if ( sb_nums[ 0 ][ Math.floor( num / 10 ) ] )
+		_Draw_TransPic( 246, 64, sb_nums[ 0 ][ Math.floor( num / 10 ) ] );
+	if ( sb_nums[ 0 ][ num % 10 ] )
+		_Draw_TransPic( 266, 64, sb_nums[ 0 ][ num % 10 ] );
+
+	// secrets
+	Sbar_IntermissionNumber( 160, 104, _cl.stats[ STAT_SECRETS ], 3, 0 );
+	if ( sb_slash )
+		_Draw_TransPic( 232, 104, sb_slash );
+	Sbar_IntermissionNumber( 240, 104, _cl.stats[ STAT_TOTALSECRETS ], 3, 0 );
+
+	// kills
+	Sbar_IntermissionNumber( 160, 144, _cl.stats[ STAT_MONSTERS ], 3, 0 );
+	if ( sb_slash )
+		_Draw_TransPic( 232, 144, sb_slash );
+	Sbar_IntermissionNumber( 240, 144, _cl.stats[ STAT_TOTALMONSTERS ], 3, 0 );
 
 }
 
@@ -902,6 +959,10 @@ Sbar_FinaleOverlay
 */
 export function Sbar_FinaleOverlay() {
 
-	// Finale text overlay - simplified for browser
+	if ( ! _Draw_TransPic || ! _Draw_CachePic ) return;
+
+	const pic = _Draw_CachePic( 'gfx/finale.lmp' );
+	if ( pic )
+		_Draw_TransPic( ( _vid.width - pic.width ) / 2, 16, pic );
 
 }

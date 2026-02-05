@@ -392,7 +392,8 @@ export async function Host_Init( parms ) {
 		Draw_Character: Draw_Character,
 		Draw_String: Draw_String,
 		Draw_Fill: Draw_Fill,
-		Draw_PicFromWad: Draw_PicFromWad
+		Draw_PicFromWad: Draw_PicFromWad,
+		Draw_CachePic: Draw_CachePic
 	} );
 	Sbar_Init();
 	CL_Init();
