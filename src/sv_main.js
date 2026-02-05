@@ -8,7 +8,7 @@ import {
 	MSG_WriteAngle16,
 	standard_quake
 } from './common.js';
-import { Cmd_AddCommand, Cmd_ExecuteString, Cbuf_AddText, Cbuf_InsertText, src_command } from './cmd.js';
+import { Cmd_AddCommand, Cmd_ExecuteString, Cbuf_InsertText } from './cmd.js';
 import { cvar_t, Cvar_RegisterVariable, Cvar_Set, Cvar_SetValue } from './cvar.js';
 import {
 	MAX_MODELS, MAX_SOUNDS, MAX_DATAGRAM, MAX_EDICTS, MAX_MSGLEN,
@@ -57,9 +57,9 @@ import {
 	NET_CanSendMessage, NET_SendToAll, NET_Close, NET_GetMessage
 } from './net_main.js';
 import { net_activeconnections, set_net_activeconnections } from './net.js';
-import { host_frametime, set_host_frametime, realtime, Host_ClearMemory } from './host.js';
+import { realtime, Host_ClearMemory } from './host.js';
 import { COM_LoadFile } from './pak.js';
-import { VectorCopy, VectorAdd, VectorSubtract, DotProduct } from './mathlib.js';
+import { VectorCopy, VectorAdd, DotProduct } from './mathlib.js';
 import { Mod_ForName, Mod_LeafPVS } from './gl_model.js';
 import { PR_LoadProgs, PR_AllocEdicts, ED_ClearEdict, ED_LoadFromFile, PR_SetCurrentSkill } from './pr_edict.js';
 import { pr_global_struct, pr_strings, pr_edict_size, progs, pr_crc, EDICT_NUM, PR_SetSV, EDICT_TO_PROG, PROG_TO_EDICT, NEXT_EDICT, PR_GetString } from './progs.js';
@@ -1357,7 +1357,7 @@ export function SV_DropClient( crash ) {
 
 	if ( ! crash ) {
 
-		// send any final messages
+		// send any final messages (only if connection didn't crash)
 		if ( NET_CanSendMessage( client.netconnection ) ) {
 
 			MSG_WriteByte( client.message, svc_disconnect );
@@ -1365,20 +1365,22 @@ export function SV_DropClient( crash ) {
 
 		}
 
-		if ( client.edict != null && client.spawned ) {
+	}
 
-			// call the prog function for removing a client
-			// this will set the body to a dead frame, among other things
-			const saveSelf = pr_global_struct.self;
-			pr_global_struct.self = EDICT_TO_PROG( client.edict );
-			PR_ExecuteProgram( pr_global_struct.ClientDisconnect );
-			pr_global_struct.self = saveSelf;
+	// Always call ClientDisconnect to clean up the entity
+	// (original Quake skipped this on crash, but that leaves bodies solid/killable)
+	if ( client.edict != null && client.spawned ) {
 
-		}
-
-		Con_Printf( 'Client ' + client.name + ' removed\n' );
+		// call the prog function for removing a client
+		// this will set the body to a dead frame, among other things
+		const saveSelf = pr_global_struct.self;
+		pr_global_struct.self = EDICT_TO_PROG( client.edict );
+		PR_ExecuteProgram( pr_global_struct.ClientDisconnect );
+		pr_global_struct.self = saveSelf;
 
 	}
+
+	Con_Printf( 'Client ' + client.name + ' removed\n' );
 
 	// break the net connection
 	if ( client.netconnection != null ) {
