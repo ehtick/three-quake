@@ -3,7 +3,7 @@
 import { PITCH, YAW, ROLL,
 	IT_QUAD, IT_SUIT, IT_INVISIBILITY, IT_INVULNERABILITY,
 	STAT_HEALTH, STAT_WEAPON, STAT_WEAPONFRAME } from './quakedef.js';
-import { Con_Printf, MSG_ReadByte, MSG_ReadCoord } from './common.js';
+import { MSG_ReadByte, MSG_ReadCoord } from './common.js';
 import { Cmd_AddCommand, Cmd_Argv } from './cmd.js';
 import { cvar_t, Cvar_RegisterVariable, Cvar_Set } from './cvar.js';
 import { VectorCopy, VectorAdd, VectorSubtract, VectorNormalize,
@@ -747,12 +747,17 @@ V_CalcIntermissionRefdef
 */
 export function V_CalcIntermissionRefdef() {
 
+	// ent is the player model (visible when out of body)
+	// During intermission, the player entity is moved to info_intermission position
+	const ent = cl_entities[ cl.viewentity ];
 	// view is the weapon model (only visible from inside body)
 	const view = cl.viewent;
 
-	// QuakeWorld uses predicted origin and angles for intermission view
-	VectorCopy( cl_simorg, r_refdef.vieworg );
-	VectorCopy( cl_simangles, r_refdef.viewangles );
+	// Use entity origin (server moves player to intermission camera position)
+	VectorCopy( ent.origin, r_refdef.vieworg );
+	// Use cl.viewangles (server sends svc_setangle via fixangle=TRUE in QuakeC)
+	// This is more reliable than ent.angles which may have interpolation issues
+	VectorCopy( cl.viewangles, r_refdef.viewangles );
 	view.model = null;
 
 	// allways idle in intermission
