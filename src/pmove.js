@@ -17,6 +17,15 @@ const DIST_EPSILON = 0.03125; // 1/32 epsilon for floating point
 export const player_mins = new Float32Array( [ -16, -16, -24 ] );
 export const player_maxs = new Float32Array( [ 16, 16, 32 ] );
 
+// Cached buffers for PM_FlyMove to avoid per-call allocations (Golden Rule #4)
+const _pm_flymove_original_velocity = new Float32Array( 3 );
+const _pm_flymove_primal_velocity = new Float32Array( 3 );
+const _pm_flymove_end = new Float32Array( 3 );
+const _pm_flymove_dir = new Float32Array( 3 );
+const _pm_flymove_planes = [];
+for ( let i = 0; i < MAX_CLIP_PLANES; i++ )
+	_pm_flymove_planes[ i ] = new Float32Array( 3 );
+
 // Movement variables (sent from server, used for physics)
 export const movevars = {
 	gravity: 800,
@@ -453,20 +462,19 @@ function PM_FlyMove() {
 	const numbumps = 4;
 	let blocked = 0;
 
-	const original_velocity = new Float32Array( 3 );
-	const primal_velocity = new Float32Array( 3 );
+	// Use cached buffers instead of allocating per-call
+	const original_velocity = _pm_flymove_original_velocity;
+	const primal_velocity = _pm_flymove_primal_velocity;
 	VectorCopy( pmove.velocity, original_velocity );
 	VectorCopy( pmove.velocity, primal_velocity );
 
-	const planes = [];
-	for ( let i = 0; i < MAX_CLIP_PLANES; i++ )
-		planes.push( new Float32Array( 3 ) );
+	const planes = _pm_flymove_planes;
 	let numplanes = 0;
 
 	let time_left = frametime;
 
 	for ( let bumpcount = 0; bumpcount < numbumps; bumpcount++ ) {
-		const end = new Float32Array( 3 );
+		const end = _pm_flymove_end;
 		for ( let i = 0; i < 3; i++ )
 			end[ i ] = pmove.origin[ i ] + time_left * pmove.velocity[ i ];
 
@@ -533,7 +541,7 @@ function PM_FlyMove() {
 				pmove.velocity.fill( 0 );
 				break;
 			}
-			const dir = new Float32Array( 3 );
+			const dir = _pm_flymove_dir;
 			CrossProduct( planes[ 0 ], planes[ 1 ], dir );
 			const d = DotProduct( dir, pmove.velocity );
 			VectorScale( dir, d, pmove.velocity );
