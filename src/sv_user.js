@@ -31,6 +31,13 @@ let wishspeed = 0;
 
 // Cached buffers to avoid per-frame allocations (Golden Rule #4)
 const _airaccel_wishvel = new Float32Array( 3 );
+const _idealpitch_z = new Float32Array( MAX_FORWARD );
+const _idealpitch_top = new Float32Array( 3 );
+const _idealpitch_bottom = new Float32Array( 3 );
+const _watermove_wishvel = new Float32Array( 3 );
+const _airmove_wishvel = new Float32Array( 3 );
+const _clientthink_v_angle = new Float32Array( 3 );
+const _readclientmove_angle = new Float32Array( 3 );
 
 // world
 let angles = null; // float *
@@ -89,9 +96,10 @@ SV_SetIdealPitch
 */
 export function SV_SetIdealPitch() {
 
-	const z = new Float32Array( MAX_FORWARD );
-	const top = new Float32Array( 3 );
-	const bottom = new Float32Array( 3 );
+	// Use cached buffers instead of allocating per-call
+	const z = _idealpitch_z;
+	const top = _idealpitch_top;
+	const bottom = _idealpitch_bottom;
 
 	if ( ! ( ( sv_player.v.flags | 0 ) & FL_ONGROUND ) )
 		return;
@@ -265,7 +273,8 @@ SV_WaterMove
 */
 export function SV_WaterMove() {
 
-	const wishvel = new Float32Array( 3 );
+	// Use cached buffer instead of allocating per-call
+	const wishvel = _watermove_wishvel;
 
 	//
 	// user intentions
@@ -355,7 +364,8 @@ SV_AirMove
 */
 export function SV_AirMove() {
 
-	const wishvel = new Float32Array( 3 );
+	// Use cached buffer instead of allocating per-call
+	const wishvel = _airmove_wishvel;
 
 	AngleVectors( sv_player.v.angles, forward, right, up );
 
@@ -412,7 +422,8 @@ the angle fields specify an exact angular motion in degrees
 */
 export function SV_ClientThink() {
 
-	const v_angle = new Float32Array( 3 );
+	// Use cached buffer instead of allocating per-call
+	const v_angle = _clientthink_v_angle;
 
 	if ( sv_player.v.movetype === MOVETYPE_NONE )
 		return;
@@ -474,7 +485,8 @@ SV_ReadClientMove
 */
 export function SV_ReadClientMove( move ) {
 
-	const angle = new Float32Array( 3 );
+	// Use cached buffer instead of allocating per-call
+	const angle = _readclientmove_angle;
 
 	// read ping time
 	host_client.ping_times[ host_client.num_pings % NUM_PING_TIMES ]
