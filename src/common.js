@@ -511,22 +511,19 @@ export function MSG_ReadFloat() {
 
 export function MSG_ReadString() {
 
-	let string = '';
-	let l = 0;
+	// Use array.join() instead of string concatenation to avoid O(n²) allocations
+	const chars = [];
 
-	while ( true ) {
+	while ( chars.length < 2047 ) {
 
 		const c = MSG_ReadChar();
 		if ( c === - 1 || c === 0 )
 			break;
-		string += String.fromCharCode( c );
-		l ++;
-		if ( l >= 2047 )
-			break;
+		chars.push( String.fromCharCode( c ) );
 
 	}
 
-	return string;
+	return chars.join( '' );
 
 }
 
