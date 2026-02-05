@@ -949,7 +949,7 @@ function PF_Find() {
 
 function PR_CheckEmptyString( s ) {
 
-	if ( ! s || s.charCodeAt( 0 ) <= 32 )
+	if ( s == null || s.length === 0 || s.charCodeAt( 0 ) <= 32 )
 		PR_RunError( 'Bad string' );
 
 }
