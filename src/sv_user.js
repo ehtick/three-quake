@@ -549,7 +549,6 @@ const MAX_MESSAGES_PER_CLIENT = 10;
 
 let _msgLoopCount = 0;
 const MAX_MSG_LOOP_WARN = 100;
-let _runClientsFrame = 0; // Shared for debugging
 
 export function SV_ReadClientMessage() {
 
@@ -692,9 +691,6 @@ SV_RunClients
 */
 export function SV_RunClients() {
 
-	_runClientsFrame++;
-	const logFrame = _runClientsFrame <= 5 || _runClientsFrame % 1000 === 0;
-
 	for ( let i = 0; i < svs.maxclients; i ++ ) {
 
 		host_client = svs.clients[ i ];
@@ -703,28 +699,10 @@ export function SV_RunClients() {
 		if ( ! host_client.active )
 			continue;
 
-		if ( logFrame ) {
-			Sys_Printf( '[Frame %d] Client %d: active=%s spawned=%s\n', _runClientsFrame, i, host_client.active, host_client.spawned );
-		}
-
 		SV_SetPlayer( host_client.edict );
 
-		// Detect freeze: log before and after potentially blocking call
-		const beforeRead = performance.now();
-		if ( logFrame ) {
-			Sys_Printf( '[Frame %d] Client %d: calling SV_ReadClientMessage\n', _runClientsFrame, i );
-		}
+		if ( ! SV_ReadClientMessage() ) {
 
-		const readResult = SV_ReadClientMessage();
-
-		const afterRead = performance.now();
-		if ( afterRead - beforeRead > 100 || logFrame ) {
-			Sys_Printf( '[Frame %d] Client %d: SV_ReadClientMessage returned %s in %dms\n', _runClientsFrame, i, readResult, Math.floor( afterRead - beforeRead ) );
-		}
-
-		if ( ! readResult ) {
-
-			Sys_Printf( '[Frame %d] Client %d: dropping (readResult=false)\n', _runClientsFrame, i );
 			SV_DropClient( false ); // client misbehaved...
 			continue;
 
@@ -740,19 +718,9 @@ export function SV_RunClients() {
 
 		// always pause in single player if in console or menus
 		if ( ! sv.paused && ( svs.maxclients > 1 || ( _get_key_dest ? _get_key_dest() : 0 ) === key_game ) ) {
-			if ( logFrame ) {
-				Sys_Printf( '[Frame %d] Client %d: calling SV_ClientThink\n', _runClientsFrame, i );
-			}
 			SV_ClientThink();
-			if ( logFrame ) {
-				Sys_Printf( '[Frame %d] Client %d: SV_ClientThink done\n', _runClientsFrame, i );
-			}
 		}
 
-	}
-
-	if ( logFrame ) {
-		Sys_Printf( '[Frame %d] SV_RunClients done\n', _runClientsFrame );
 	}
 
 }
