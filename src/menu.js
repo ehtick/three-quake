@@ -12,7 +12,7 @@ import {
 import { cl_forwardspeed, cl_backspeed } from './cl_input.js';
 import { sensitivity, m_pitch, lookspring, lookstrafe } from './cl_main.js';
 import { volume } from './sound.js';
-import { Cvar_SetValue } from './cvar.js';
+import { Cvar_SetValue, Cvar_VariableValue } from './cvar.js';
 import { scr_viewsize, scr_con_current } from './gl_screen.js';
 import { v_gamma } from './view.js';
 import { gl_texturemode, GL_UpdateTextureFiltering } from './glquake.js';
@@ -1507,6 +1507,10 @@ function M_AdjustSliders( dir ) {
 			Cvar_SetValue( 'lookstrafe', ! lookstrafe.value ? 1 : 0 );
 			break;
 
+		case 12: // crosshair
+			Cvar_SetValue( 'crosshair', Cvar_VariableValue( 'crosshair' ) !== 0 ? 0 : 1 );
+			break;
+
 	}
 
 }
@@ -1519,7 +1523,7 @@ function M_AdjustSliders( dir ) {
 ==============================================================================
 */
 
-const OPTIONS_ITEMS = 12;
+const OPTIONS_ITEMS = 13;
 let m_options_cursor = 0;
 
 function M_Menu_Options_f() {
@@ -1572,6 +1576,9 @@ function M_Options_Draw() {
 
 	M_Print( 16, 120, '            Lookstrafe' );
 	M_DrawCheckbox( 220, 120, lookstrafe.value );
+
+	M_Print( 16, 128, '             Crosshair' );
+	M_DrawCheckbox( 220, 128, Cvar_VariableValue( 'crosshair' ) );
 
 	// cursor
 	M_DrawCharacter( 200, 32 + m_options_cursor * 8, 12 + ( ( Math.floor( _realtime_get() * 4 ) ) & 1 ) );

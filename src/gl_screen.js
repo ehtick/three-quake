@@ -7,7 +7,7 @@ import { Sbar_Draw, Sbar_Changed, Sbar_IntermissionOverlay, Sbar_FinaleOverlay, 
 import { M_Draw } from './menu.js';
 import { Draw_Character, Draw_CachePic, Draw_Pic, Draw_FadeScreen, Draw_BeginFrame,
 	GL_Set2D, Draw_TileClear, Draw_PicFromWad, Draw_GetVirtualWidth, Draw_GetVirtualHeight } from './gl_draw.js';
-import { Cvar_RegisterVariable, Cvar_Set } from './cvar.js';
+import { Cvar_RegisterVariable, Cvar_Set, Cvar_VariableValue } from './cvar.js';
 import { Cmd_AddCommand } from './cmd.js';
 import { key_dest, key_game, key_console, key_message } from './keys.js';
 import { realtime, host_frametime } from './host.js';
@@ -870,9 +870,9 @@ export function SCR_UpdateScreen() {
 
 	} else {
 
-		if ( ! _cls.demoplayback )
-			Draw_Character( Math.floor( Draw_GetVirtualWidth() / 2 ) - 4,
-				Math.floor( Draw_GetVirtualHeight() / 2 ) - 4, 43 ); // '+' crosshair
+		if ( Cvar_VariableValue( 'crosshair' ) !== 0 && _cls.demoplayback === false )
+			Draw_Character( Math.floor( scr_vrect.x + scr_vrect.width / 2 + Cvar_VariableValue( 'cl_crossx' ) ) - 4,
+				Math.floor( scr_vrect.y + scr_vrect.height / 2 + Cvar_VariableValue( 'cl_crossy' ) ) - 4, 43 ); // '+' crosshair
 
 		SCR_DrawRam();
 		SCR_DrawNet();
