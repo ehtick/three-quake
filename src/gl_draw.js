@@ -706,12 +706,8 @@ export function Draw_TransPicTranslate( x, y, pic, translation ) {
 
 	_transCtx.putImageData( _transImageData, 0, 0 );
 
-	// Draw scaled to virtual coords
-	const sx = ( x / 320 ) * _vid.width;
-	const sy = ( y / 200 ) * _vid.height;
-	const sw = ( 64 / 320 ) * _vid.width;
-	const sh = ( 64 / 200 ) * _vid.height;
-	overlayCtx.drawImage( _transCanvas, sx, sy, sw, sh );
+	// Draw at (x, y) stretched to pic dimensions, matching original GL quad
+	overlayCtx.drawImage( _transCanvas, x, y, pic.width, pic.height );
 
 }
 

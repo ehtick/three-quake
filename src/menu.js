@@ -10,7 +10,7 @@ import {
 	keybindings, Key_SetBinding, Key_KeynumToString
 } from './keys.js';
 import { cl_forwardspeed, cl_backspeed } from './cl_input.js';
-import { sensitivity, m_pitch, lookspring, lookstrafe } from './cl_main.js';
+import { sensitivity, m_pitch, lookspring, lookstrafe, cl_color } from './cl_main.js';
 import { volume } from './sound.js';
 import { Cvar_SetValue, Cvar_VariableValue } from './cvar.js';
 import { scr_viewsize, scr_con_current } from './gl_screen.js';
@@ -1879,6 +1879,8 @@ let setup_cursor = 4;
 const setup_cursor_table = [ 40, 56, 80, 104, 140 ];
 let setup_hostname = 'hostname';
 let setup_myname = 'player';
+let setup_oldtop = 0;
+let setup_oldbottom = 0;
 let setup_top = 0;
 let setup_bottom = 0;
 const NUM_SETUP_CMDS = 5;
@@ -1892,6 +1894,8 @@ function M_Menu_Setup_f() {
 	// Initialize from current values
 	setup_myname = _cl_name ? _cl_name.string : 'player';
 	// setup_hostname would come from hostname cvar if we had it
+	setup_top = setup_oldtop = ( cl_color.value | 0 ) >> 4;
+	setup_bottom = setup_oldbottom = ( cl_color.value | 0 ) & 15;
 
 }
 
@@ -1954,18 +1958,46 @@ function M_Setup_Key( key ) {
 			if ( setup_cursor >= NUM_SETUP_CMDS )
 				setup_cursor = 0;
 			break;
+		case K_LEFTARROW:
+			if ( setup_cursor < 2 )
+				return;
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu3.wav' );
+			if ( setup_cursor === 2 )
+				setup_top = setup_top - 1;
+			if ( setup_cursor === 3 )
+				setup_bottom = setup_bottom - 1;
+			break;
+		case K_RIGHTARROW:
+			if ( setup_cursor < 2 )
+				return;
+			if ( _S_LocalSound ) _S_LocalSound( 'misc/menu3.wav' );
+			if ( setup_cursor === 2 )
+				setup_top = setup_top + 1;
+			if ( setup_cursor === 3 )
+				setup_bottom = setup_bottom + 1;
+			break;
 		case K_ENTER:
 			if ( setup_cursor === 0 || setup_cursor === 1 )
 				return;
 
-			if ( setup_cursor === 4 ) {
+			if ( setup_cursor === 2 || setup_cursor === 3 ) {
 
-				Cbuf_AddText( 'name "' + setup_myname + '"\n' );
-				Cbuf_AddText( 'hostname "' + setup_hostname + '"\n' );
-				m_entersound = true;
-				M_Menu_MultiPlayer_f();
+				// ENTER on color items acts as RIGHT arrow (goto forward in C)
+				if ( _S_LocalSound ) _S_LocalSound( 'misc/menu3.wav' );
+				if ( setup_cursor === 2 )
+					setup_top = setup_top + 1;
+				if ( setup_cursor === 3 )
+					setup_bottom = setup_bottom + 1;
+				break;
 
 			}
+
+			// setup_cursor == 4 (Accept)
+			Cbuf_AddText( 'name "' + setup_myname + '"\n' );
+			if ( setup_top !== setup_oldtop || setup_bottom !== setup_oldbottom )
+				Cbuf_AddText( 'color ' + setup_top + ' ' + setup_bottom + '\n' );
+			m_entersound = true;
+			M_Menu_MultiPlayer_f();
 
 			break;
 
@@ -2008,6 +2040,15 @@ function M_Setup_Key( key ) {
 			break;
 
 	}
+
+	if ( setup_top > 13 )
+		setup_top = 0;
+	if ( setup_top < 0 )
+		setup_top = 13;
+	if ( setup_bottom > 13 )
+		setup_bottom = 0;
+	if ( setup_bottom < 0 )
+		setup_bottom = 13;
 
 }
 
