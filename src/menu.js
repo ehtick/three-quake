@@ -277,6 +277,7 @@ export function M_SetExternals( externals ) {
 	if ( externals.WT_QueryRooms ) _WT_QueryRooms = externals.WT_QueryRooms;
 	if ( externals.WT_CreateRoom ) _WT_CreateRoom = externals.WT_CreateRoom;
 	if ( externals.cl_name ) _cl_name = externals.cl_name;
+	if ( externals.Draw_TransPicTranslate ) _Draw_TransPicTranslate = externals.Draw_TransPicTranslate;
 
 }
 
@@ -351,6 +352,13 @@ function M_DrawPic( x, y, pic ) {
 }
 
 export { M_DrawPic as M_DrawPic_export };
+
+function M_DrawTransPicTranslate( x, y, pic ) {
+
+	if ( _Draw_TransPicTranslate != null && pic != null )
+		_Draw_TransPicTranslate( x + ( ( _vid.width - 320 ) >> 1 ), y + ( ( _vid.height - 200 ) >> 1 ), pic, translationTable );
+
+}
 
 function M_DrawTextBox( x, y, width, lines ) {
 
@@ -1908,6 +1916,13 @@ function M_Setup_Draw() {
 
 	M_DrawTextBox( 64, 132, 14, 1 );
 	M_Print( 72, 140, 'Accept Changes' );
+
+	// Draw player color preview (bigbox + menuplyr with color translation)
+	const bigbox = _Draw_CachePic( 'gfx/bigbox.lmp' );
+	M_DrawTransPic( 160, 64, bigbox );
+	const menuplyr = _Draw_CachePic( 'gfx/menuplyr.lmp' );
+	M_BuildTranslationTable( setup_top * 16, setup_bottom * 16 );
+	M_DrawTransPicTranslate( 172, 72, menuplyr );
 
 	M_DrawCharacter( 56, setup_cursor_table[ setup_cursor ], 12 + ( ( Math.floor( _realtime_get() * 4 ) ) & 1 ) );
 

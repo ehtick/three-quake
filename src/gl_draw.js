@@ -630,14 +630,88 @@ export function Draw_TransPic( x, y, pic ) {
 =============
 Draw_TransPicTranslate
 
-Only used for the player color selection menu
+Only used for the player color selection menu.
+Remaps the pic's palette indices through the translation table,
+then draws the result. Ported from WinQuake/gl_draw.c:658-699
 =============
 */
+
+// Cached menuplyr raw pixel data (8-bit palette indices)
+let menuplyr_pixels = null;
+let menuplyr_width = 0;
+let menuplyr_height = 0;
+
+// Cached canvas/context/imagedata for Draw_TransPicTranslate (Golden Rule #4)
+let _transCanvas = null;
+let _transCtx = null;
+let _transImageData = null;
+
 export function Draw_TransPicTranslate( x, y, pic, translation ) {
 
-	// Would need to remap colors through translation table
-	// For now, just draw the pic normally
-	Draw_Pic( x, y, pic );
+	if ( menuplyr_pixels == null || pic == null ) return;
+	if ( overlayCtx == null ) return;
+
+	const pal = d_8to24table || vid_d_8to24table;
+	if ( pal == null ) return;
+
+	// Create or reuse cached canvas
+	if ( _transCanvas == null ) {
+
+		_transCanvas = document.createElement( 'canvas' );
+		_transCanvas.width = 64;
+		_transCanvas.height = 64;
+		_transCtx = _transCanvas.getContext( '2d' );
+		_transImageData = _transCtx.createImageData( 64, 64 );
+
+	}
+
+	// The original C code resamples the menuplyr pic to 64x64.
+	// menuplyr.lmp is typically larger, so we scale down.
+	const srcW = menuplyr_width;
+	const srcH = menuplyr_height;
+	const dest = _transImageData.data;
+
+	for ( let v = 0; v < 64; v ++ ) {
+
+		const srcRow = ( ( v * srcH ) >> 6 ) * srcW;
+
+		for ( let u = 0; u < 64; u ++ ) {
+
+			const srcCol = ( u * srcW ) >> 6;
+			let p = menuplyr_pixels[ srcRow + srcCol ];
+
+			// Apply translation table
+			p = translation[ p ];
+
+			if ( p === 255 ) {
+
+				dest[ ( v * 64 + u ) * 4 ] = 0;
+				dest[ ( v * 64 + u ) * 4 + 1 ] = 0;
+				dest[ ( v * 64 + u ) * 4 + 2 ] = 0;
+				dest[ ( v * 64 + u ) * 4 + 3 ] = 0;
+
+			} else {
+
+				const rgba = pal[ p ];
+				dest[ ( v * 64 + u ) * 4 ] = rgba & 0xff;
+				dest[ ( v * 64 + u ) * 4 + 1 ] = ( rgba >> 8 ) & 0xff;
+				dest[ ( v * 64 + u ) * 4 + 2 ] = ( rgba >> 16 ) & 0xff;
+				dest[ ( v * 64 + u ) * 4 + 3 ] = 255;
+
+			}
+
+		}
+
+	}
+
+	_transCtx.putImageData( _transImageData, 0, 0 );
+
+	// Draw scaled to virtual coords
+	const sx = ( x / 320 ) * _vid.width;
+	const sy = ( y / 200 ) * _vid.height;
+	const sw = ( 64 / 320 ) * _vid.width;
+	const sh = ( 64 / 200 ) * _vid.height;
+	overlayCtx.drawImage( _transCanvas, sx, sy, sw, sh );
 
 }
 
@@ -907,6 +981,16 @@ export function Draw_CachePic( path ) {
 	const width = view.getInt32( 0, true );
 	const height = view.getInt32( 4, true );
 	const pixels = new Uint8Array( result.data.buffer, result.data.byteOffset + 8, width * height );
+
+	// Save raw pixel data for menuplyr.lmp (used by Draw_TransPicTranslate)
+	if ( path === 'gfx/menuplyr.lmp' ) {
+
+		menuplyr_pixels = new Uint8Array( width * height );
+		menuplyr_pixels.set( pixels );
+		menuplyr_width = width;
+		menuplyr_height = height;
+
+	}
 
 	const cs = _qpicToCanvas( width, height, pixels, true );
 

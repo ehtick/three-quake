@@ -33,7 +33,7 @@ import { sv, svs, client_t, NUM_SPAWN_PARMS, NUM_PING_TIMES,
 	host_client, set_host_client } from './server.js';
 import { R_InitTextures, R_Init, D_FlushCaches } from './gl_rmisc.js';
 import { VID_Init, VID_Shutdown } from './vid.js';
-import { Draw_Init, Draw_Character, Draw_String, Draw_ConsoleBackground, Draw_SetExternals, Draw_PicFromWad, Draw_CachePic, Draw_Pic, Draw_TransPic, Draw_Fill, Draw_FadeScreen } from './gl_draw.js';
+import { Draw_Init, Draw_Character, Draw_String, Draw_ConsoleBackground, Draw_SetExternals, Draw_PicFromWad, Draw_CachePic, Draw_Pic, Draw_TransPic, Draw_TransPicTranslate, Draw_Fill, Draw_FadeScreen } from './gl_draw.js';
 import { SCR_Init, SCR_UpdateScreen, SCR_SetExternals, SCR_EndLoadingPlaque, SCR_BeginLoadingPlaque } from './gl_screen.js';
 import { S_Init, S_Update, S_Shutdown, S_StopAllSounds, S_SetCallbacks } from './snd_dma.js';
 import { CDAudio_Init, CDAudio_Update, CDAudio_Shutdown } from './cd_audio.js';
@@ -373,7 +373,8 @@ export async function Host_Init( parms ) {
 		CL_NextDemo: CL_NextDemo,
 		WT_QueryRooms: WT_QueryRooms,
 		WT_CreateRoom: WT_CreateRoom,
-		cl_name: cl_name
+		cl_name: cl_name,
+		Draw_TransPicTranslate: Draw_TransPicTranslate
 	} );
 
 	SCR_Init();
