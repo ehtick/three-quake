@@ -159,7 +159,7 @@ export const sound_nominal_clip_dist = 1000.0;
 // cvars
 export const loadas8bit = { name: 'loadas8bit', string: '0', value: 0 };
 export const bgmvolume = { name: 'bgmvolume', string: '1', value: 1, archive: true };
-export const volume = { name: 'volume', string: '0.7', value: 0.7, archive: true };
+export const volume = { name: 'volume', string: '0.4', value: 0.4, archive: true };
 
 export let snd_initialized = false;
 export let snd_blocked = 0;

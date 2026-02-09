@@ -1622,8 +1622,8 @@ function M_Options_Key( key ) {
 					Cbuf_AddText( 'bind MOUSE1 +attack\n' );
 					Cbuf_AddText( 'cl_forwardspeed 400\n' );
 					Cbuf_AddText( 'cl_backspeed 400\n' );
-					// Set brightness to half (gamma 0.75 = slider at 50%)
-					Cbuf_AddText( 'gamma 0.75\n' );
+					Cbuf_AddText( 'gamma 1\n' );
+					Cbuf_AddText( 'volume 0.4\n' );
 					break;
 				default:
 					M_AdjustSliders( 1 );
