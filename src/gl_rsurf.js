@@ -9,11 +9,25 @@ function createQuakeLightmapMaterial( diffuseMap, lightmapTex ) {
 
 	// Use MeshLambertMaterial so surfaces respond to Three.js PointLights
 	// for dynamic lighting effects (explosions, muzzle flashes, etc.)
-	return new THREE.MeshLambertMaterial( {
+	const matOptions = {
 		map: diffuseMap,
 		lightMap: lightmapTex,
 		lightMapIntensity: 2
-	} );
+	};
+
+	// Fullbright pixel support: palette indices 224-255 should render at full
+	// intensity regardless of lighting (glowing buttons, lava, etc.).
+	// The base diffuse texture has these pixels set to BLACK so the lightmap
+	// darkens them to nothing. The fullbright texture contains only those pixels
+	// and is applied as an emissiveMap which bypasses all lighting.
+	if ( diffuseMap._fullbright != null ) {
+
+		matOptions.emissiveMap = diffuseMap._fullbright;
+		matOptions.emissive = new THREE.Color( 1, 1, 1 );
+
+	}
+
+	return new THREE.MeshLambertMaterial( matOptions );
 
 }
 import { cl, cl_dlights } from './client.js';

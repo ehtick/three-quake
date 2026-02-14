@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { Sys_Error } from './sys.js';
 import { Con_Printf, COM_FileBase } from './common.js';
-import { d_8to24table } from './vid.js';
+import { d_8to24table, vid } from './vid.js';
 import { COM_LoadFile } from './pak.js';
 import { DotProduct, VectorCopy, Length } from './mathlib.js';
 import { R_InitSky as R_InitSky_warp, GL_SubdivideSurface as GL_SubdivideSurface_warp, GL_Warp_SetLoadmodel } from './gl_warp.js';
@@ -651,10 +651,12 @@ const decompressed = new Uint8Array( MAX_MAP_LEAFS / 8 );
 // Stub functions for GL operations not yet ported
 // ============================================================================
 
-function GL_LoadTexture( name, width, height, data, mipmap, alpha ) {
+function GL_LoadTexture( name, width, height, data, mipmap, alpha, splitFullbright ) {
 
 	// Convert 8-bit palette-indexed pixels to RGBA and create a THREE.DataTexture
 	const rgba = new Uint8Array( width * height * 4 );
+	const fullbrightStart = vid.fullbright; // palette index 224+
+	let hasFullbright = false;
 
 	for ( let i = 0; i < width * height; i ++ ) {
 
@@ -676,7 +678,56 @@ function GL_LoadTexture( name, width, height, data, mipmap, alpha ) {
 			rgba[ i * 4 + 2 ] = ( color >> 16 ) & 0xff;
 			rgba[ i * 4 + 3 ] = 255;
 
+			if ( palIdx >= fullbrightStart ) hasFullbright = true;
+
 		}
+
+	}
+
+	// If texture has fullbright pixels (palette 224-255), create a separate
+	// fullbright texture for use as emissiveMap. Fullbright pixels should render
+	// at full intensity regardless of lighting (e.g. glowing buttons, lava).
+	// Set fullbright pixels to BLACK in the base texture so they don't get
+	// darkened by the lightmap, and put them in the fullbright texture instead.
+	if ( hasFullbright === true && splitFullbright === true ) {
+
+		const fbRgba = new Uint8Array( width * height * 4 );
+
+		for ( let i = 0; i < width * height; i ++ ) {
+
+			const palIdx = data[ i ];
+
+			if ( palIdx >= fullbrightStart && ! ( alpha && palIdx === 255 ) ) {
+
+				// Copy to fullbright texture
+				fbRgba[ i * 4 ] = rgba[ i * 4 ];
+				fbRgba[ i * 4 + 1 ] = rgba[ i * 4 + 1 ];
+				fbRgba[ i * 4 + 2 ] = rgba[ i * 4 + 2 ];
+				fbRgba[ i * 4 + 3 ] = 255;
+
+				// Black out in base texture
+				rgba[ i * 4 ] = 0;
+				rgba[ i * 4 + 1 ] = 0;
+				rgba[ i * 4 + 2 ] = 0;
+
+			}
+
+		}
+
+		const fbTexture = new THREE.DataTexture( fbRgba, width, height, THREE.RGBAFormat );
+		const fbFilter = gl_texturemode.value ? THREE.LinearFilter : THREE.NearestFilter;
+		const fbMipFilter = gl_texturemode.value ? THREE.LinearMipmapLinearFilter : THREE.NearestMipmapLinearFilter;
+		fbTexture.magFilter = fbFilter;
+		fbTexture.minFilter = mipmap ? fbMipFilter : fbFilter;
+		fbTexture.wrapS = THREE.RepeatWrapping;
+		fbTexture.wrapT = THREE.RepeatWrapping;
+		fbTexture.generateMipmaps = mipmap;
+		fbTexture.colorSpace = THREE.SRGBColorSpace;
+		fbTexture.needsUpdate = true;
+		GL_RegisterTexture( fbTexture );
+
+		// Store on a temporary variable, will be attached to the main texture below
+		rgba._fullbrightTexture = fbTexture;
 
 	}
 
@@ -693,6 +744,13 @@ function GL_LoadTexture( name, width, height, data, mipmap, alpha ) {
 	// Note: flipY defaults to false for DataTexture, which is correct for Quake
 	// Quake's UV T=0 at top + texture row 0 at V=0 means no flip is needed
 	texture.needsUpdate = true;
+
+	// Attach fullbright texture if one was created
+	if ( rgba._fullbrightTexture != null ) {
+
+		texture._fullbright = rgba._fullbrightTexture;
+
+	}
 
 	// Register for filter updates when setting changes
 	GL_RegisterTexture( texture );
@@ -1110,7 +1168,7 @@ function Mod_LoadTextures( fileofs, filelen ) {
 
 		} else {
 
-			tx.gl_texture = GL_LoadTexture( name, tx.width, tx.height, tx.pixels, true, false );
+			tx.gl_texture = GL_LoadTexture( name, tx.width, tx.height, tx.pixels, true, false, true );
 
 		}
 
