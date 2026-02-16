@@ -9,17 +9,12 @@ import { vec3_origin, DotProduct, VectorCopy, VectorAdd, VectorSubtract,
 import { ON_EPSILON, PITCH, YAW, ROLL } from './quakedef.js';
 import { MOVETYPE_NONE, MOVETYPE_WALK, MOVETYPE_NOCLIP, FL_ONGROUND,
 	FL_WATERJUMP, sv, svs, sv_player, pr_global_struct, host_frametime,
-	sv_friction, sv_stopspeed, SV_SetPlayer,
+	sv_friction, sv_edgefriction, sv_stopspeed, sv_maxspeed, sv_accelerate,
+	sv_idealpitchscale, SV_SetPlayer,
 	SV_Move, SV_LinkEdict, PR_ExecuteProgram, EDICT_TO_PROG } from './sv_phys.js';
 
 const MAX_FORWARD = 6;
 const NUM_PING_TIMES = 16;
-
-// cvars
-export const sv_edgefriction = { name: 'edgefriction', string: '2', value: 2 };
-export const sv_maxspeed = { name: 'sv_maxspeed', string: '320', value: 320, server: true };
-export const sv_accelerate = { name: 'sv_accelerate', string: '10', value: 10 };
-export const sv_idealpitchscale = { name: 'sv_idealpitchscale', string: '0.8', value: 0.8 };
 
 // module-level state (matching C static/global variables)
 const forward = new Float32Array( 3 );
@@ -240,8 +235,8 @@ export function SV_AirAccelerate( wishveloc ) {
 	const addspeed = wishspd - currentspeed;
 	if ( addspeed <= 0 )
 		return;
-	// BUG FIX: was using module-level 'wishspeed' instead of local 'wishspd'
-	let accelspeed = sv_accelerate.value * wishspd * host_frametime;
+	// C code intentionally uses module-level wishspeed (not local wishspd)
+	let accelspeed = sv_accelerate.value * wishspeed * host_frametime;
 	if ( accelspeed > addspeed )
 		accelspeed = addspeed;
 
