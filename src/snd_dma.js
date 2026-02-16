@@ -37,6 +37,9 @@ const MAX_SFX = 512;
 for ( let i = 0; i < MAX_SFX; i ++ )
 	known_sfx[ i ] = new sfx_t();
 
+// vec3_origin for S_LocalSound (avoids allocating per call)
+const _vec3_origin = new Float32Array( 3 );
+
 // Ambient sounds
 let ambient_sfx = new Array( NUM_AMBIENTS ).fill( null );
 let sound_started = false;
@@ -330,7 +333,7 @@ export function SND_PickChannel( entnum, entchannel ) {
 		}
 
 		// Don't let monster sounds override player sounds
-		if ( channels[ ch_idx ].entnum === 1 && entnum !== 1 && channels[ ch_idx ].sfx )
+		if ( channels[ ch_idx ].entnum === cl.viewentity && entnum !== cl.viewentity && channels[ ch_idx ].sfx )
 			continue;
 
 		// Track channel with least time remaining (fallback)
@@ -554,14 +557,7 @@ export function S_StopAllSounds( clear ) {
 
 	for ( let i = 0; i < MAX_CHANNELS; i ++ ) {
 
-		if ( channels[ i ].sfx ) {
-
-			channels[ i ].sfx = null;
-
-		}
-
-		channels[ i ].end = 0;
-
+		// Stop any playing Web Audio source before zeroing
 		if ( channels[ i ]._audioSource ) {
 
 			try {
@@ -570,11 +566,25 @@ export function S_StopAllSounds( clear ) {
 
 			} catch ( e ) { /* ignore */ }
 
-			channels[ i ]._audioSource = null;
-			channels[ i ]._gainNode = null;
-			channels[ i ]._panNode = null;
-
 		}
+
+		// Q_memset(channels, 0, MAX_CHANNELS * sizeof(channel_t)) -- zero ALL fields
+		channels[ i ].sfx = null;
+		channels[ i ].leftvol = 0;
+		channels[ i ].rightvol = 0;
+		channels[ i ].end = 0;
+		channels[ i ].pos = 0;
+		channels[ i ].looping = 0;
+		channels[ i ].entnum = 0;
+		channels[ i ].entchannel = 0;
+		channels[ i ].origin[ 0 ] = 0;
+		channels[ i ].origin[ 1 ] = 0;
+		channels[ i ].origin[ 2 ] = 0;
+		channels[ i ].dist_mult = 0;
+		channels[ i ].master_vol = 0;
+		channels[ i ]._audioSource = null;
+		channels[ i ]._gainNode = null;
+		channels[ i ]._panNode = null;
 
 	}
 
@@ -825,7 +835,7 @@ export function S_LocalSound( name ) {
 
 	}
 
-	S_StartSound( 0, - 1, sfx, listener_origin, 1, 1 );
+	S_StartSound( cl.viewentity, - 1, sfx, _vec3_origin, 1, 1 );
 
 }
 
@@ -834,9 +844,9 @@ export function S_LocalSound( name ) {
 S_StaticSound
 ==================
 */
-export function S_StaticSound( sfx, origin, fvol, attenuation ) {
+export function S_StaticSound( sfx, origin, vol, attenuation ) {
 
-	if ( ! sfx || ! sound_started )
+	if ( sfx == null || ! sound_started )
 		return;
 
 	if ( total_channels >= MAX_CHANNELS ) {
@@ -850,7 +860,7 @@ export function S_StaticSound( sfx, origin, fvol, attenuation ) {
 	Sound_SetTotalChannels( total_channels + 1 );
 
 	const sc = S_LoadSound( sfx );
-	if ( ! sc )
+	if ( sc == null )
 		return;
 
 	if ( sc.loopstart < 0 ) {
@@ -864,7 +874,7 @@ export function S_StaticSound( sfx, origin, fvol, attenuation ) {
 	ss.origin[ 0 ] = origin[ 0 ];
 	ss.origin[ 1 ] = origin[ 1 ];
 	ss.origin[ 2 ] = origin[ 2 ];
-	ss.master_vol = Math.floor( fvol * 255 );
+	ss.master_vol = vol;
 	ss.dist_mult = ( attenuation / 64 ) / sound_nominal_clip_dist;
 	ss.entnum = - 1; // -1 = static world sound, not from any entity
 	ss.entchannel = 0;
@@ -1030,11 +1040,12 @@ function _playWebAudio( sc, chan ) {
 		// Cache AudioBuffer on the sfxcache to avoid recreating it every play
 		let audioBuffer = sc._audioBuffer;
 
+		const sampleRate = sc.speed || 11025;
+		const numSamples = sc.length;
+
 		if ( ! audioBuffer ) {
 
-			const sampleRate = sc.speed || 11025;
-			const numSamples = sc.length;
-			const numChannels = sc.stereo ? 2 : 1;
+			const numChannels = ( sc.stereo !== 0 ) ? 2 : 1;
 
 			audioBuffer = audioContext.createBuffer( numChannels, numSamples, sampleRate );
 

@@ -65,7 +65,8 @@ import { R_TranslatePlayerSkin } from './gl_rmisc.js';
 export let cl_playerindex = -1;
 import { R_NewMap } from './gl_rmisc.js';
 import { R_ParseParticleEffect, R_AddEfrags } from './render.js';
-import { Host_Error, Host_EndGame, realtime, set_noclip_anglehack } from './host.js';
+import { Host_Error, Host_EndGame, realtime } from './host.js';
+import { set_noclip_anglehack } from './host_cmd.js';
 import { CL_SignonReply, CL_ClearState, cl_shownet } from './cl_main.js';
 import { CL_ParseTEnt } from './cl_tent.js';
 import { S_PrecacheSound, S_StartSound, S_StopSound, S_StaticSound } from './snd_dma.js';
@@ -1159,7 +1160,7 @@ export function CL_ParseStaticSound() {
 	const vol = MSG_ReadByte();
 	const atten = MSG_ReadByte();
 
-	S_StaticSound( cl.sound_precache[ sound_num ], org, vol / 255.0, atten );
+	S_StaticSound( cl.sound_precache[ sound_num ], org, vol, atten );
 
 }
 
