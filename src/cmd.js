@@ -1,6 +1,6 @@
 // Ported from: WinQuake/cmd.c -- Quake script command processing module
 
-import { Con_Printf, SZ_Alloc, SZ_Clear, SZ_Write, SZ_Print, com_token, COM_Parse, MSG_WriteByte } from './common.js';
+import { Con_Printf, SZ_Alloc, SZ_Clear, SZ_Write, SZ_Print, com_token, COM_Parse, MSG_WriteByte, com_argc, com_argv } from './common.js';
 import { Cvar_Command, Cvar_VariableString } from './cvar.js';
 import { COM_LoadFileAsString } from './pak.js';
 import { clc_stringcmd } from './protocol.js';
@@ -573,7 +573,56 @@ function Cmd_StuffCmds_f() {
 
 	}
 
-	// TODO: implement when command line args are needed
+	// build the combined string to parse from
+	let s = 0;
+	for ( let i = 1; i < com_argc; i ++ ) {
+
+		if ( com_argv[ i ] == null )
+			continue; // NEXTSTEP nulls out -NXHost
+		s += com_argv[ i ].length + 1;
+
+	}
+
+	if ( s === 0 )
+		return;
+
+	let text = '';
+	for ( let i = 1; i < com_argc; i ++ ) {
+
+		if ( com_argv[ i ] == null )
+			continue; // NEXTSTEP nulls out -NXHost
+		text += com_argv[ i ];
+		if ( i !== com_argc - 1 )
+			text += ' ';
+
+	}
+
+	// pull out the commands
+	let build = '';
+
+	for ( let i = 0; i < text.length - 1; i ++ ) {
+
+		if ( text.charAt( i ) === '+' ) {
+
+			i ++;
+
+			let j = i;
+			while ( j < text.length && text.charAt( j ) !== '+' && text.charAt( j ) !== '-' ) {
+
+				j ++;
+
+			}
+
+			build += text.substring( i, j );
+			build += '\n';
+			i = j - 1;
+
+		}
+
+	}
+
+	if ( build.length > 0 )
+		Cbuf_InsertText( build );
 
 }
 
@@ -587,7 +636,7 @@ where the given parameter appears, or 0 if not present
 */
 export function Cmd_CheckParm( parm ) {
 
-	if ( ! parm ) {
+	if ( parm == null ) {
 
 		Con_Printf( 'Cmd_CheckParm: NULL\n' );
 		return 0;
@@ -596,7 +645,7 @@ export function Cmd_CheckParm( parm ) {
 
 	for ( let i = 1; i < Cmd_Argc(); i ++ ) {
 
-		if ( Cmd_Argv( i ) === parm )
+		if ( Cmd_Argv( i ).toLowerCase() === parm.toLowerCase() )
 			return i;
 
 	}
