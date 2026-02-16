@@ -13,7 +13,7 @@ import {
 	VectorNormalize, AngleVectors, Length, RotatePointAroundVector, BoxOnPlaneSide
 } from './mathlib.js';
 import { R_DrawWorld as R_DrawWorld_impl, R_MarkLeaves as R_MarkLeaves_impl, GL_BuildLightmaps as GL_BuildLightmaps_rsurf, R_DrawBrushModel as R_DrawBrushModel_rsurf, R_DrawWaterSurfaces as R_DrawWaterSurfaces_rsurf, R_CleanupWaterMeshes as R_CleanupWaterMeshes_rsurf } from './gl_rsurf.js';
-import { Mod_PointInLeaf } from './gl_model.js';
+import { Mod_PointInLeaf, SPR_SINGLE, SPR_ORIENTED } from './gl_model.js';
 import { R_AnimateLight as R_AnimateLight_impl, R_PushDlights as R_PushDlights_impl, R_RenderDlights as R_RenderDlights_impl, R_LightPoint, lightspot } from './gl_rlight.js';
 import { R_DrawAliasModel as R_DrawAliasModel_mesh, GL_DrawAliasShadow } from './gl_mesh.js';
 import { r_avertexnormal_dots } from './anorm_dots.js';
@@ -848,25 +848,77 @@ function R_DrawBrushModel( e ) {
 }
 
 //============================================================================
-// R_DrawSpriteModel (stub)
+// R_DrawSpriteModel
+// Ported from: WinQuake/gl_rmain.c
 //============================================================================
+
+/*
+================
+R_GetSpriteFrame
+Ported from: WinQuake/gl_rmain.c:144-188
+================
+*/
+function R_GetSpriteFrame( e ) {
+
+	const psprite = e.model.cache.data;
+	let frame = e.frame;
+
+	if ( frame >= psprite.numframes || frame < 0 ) {
+
+		Con_Printf( 'R_DrawSprite: no such frame ' + frame + '\n' );
+		frame = 0;
+
+	}
+
+	if ( psprite.frames[ frame ].type === SPR_SINGLE ) {
+
+		return psprite.frames[ frame ].frameptr;
+
+	} else {
+
+		const pspritegroup = psprite.frames[ frame ].frameptr;
+		const pintervals = pspritegroup.intervals;
+		const numframes = pspritegroup.numframes;
+		const fullinterval = pintervals[ numframes - 1 ];
+
+		const time = cl.time + e.syncbase;
+
+		// when loading in Mod_LoadSpriteGroup, we guaranteed all interval values
+		// are positive, so we don't have to worry about division by 0
+		const targettime = time - ( ( time / fullinterval ) | 0 ) * fullinterval;
+
+		let i;
+		for ( i = 0; i < ( numframes - 1 ); i ++ ) {
+
+			if ( pintervals[ i ] > targettime )
+				break;
+
+		}
+
+		return pspritegroup.frames[ i ];
+
+	}
+
+}
 
 // Sprite material cache: texture -> material
 const _spriteMaterialCache = new Map();
+// Cached vectors for SPR_ORIENTED AngleVectors output
+const _sprite_v_forward = new Float32Array( 3 );
+const _sprite_v_right = new Float32Array( 3 );
+const _sprite_v_up = new Float32Array( 3 );
 
 function R_DrawSpriteModel( e ) {
 
-	if ( ! e || ! e.model ) return;
+	if ( e == null || e.model == null ) return;
 	const psprite = e.model.cache ? e.model.cache.data : null;
-	if ( ! psprite || ! psprite.frames || ! psprite.frames.length ) return;
+	if ( psprite == null || psprite.frames == null || psprite.frames.length === 0 ) return;
 
-	const frameIdx = Math.max( 0, Math.min( e.frame || 0, psprite.numframes - 1 ) );
-	const fdesc = psprite.frames[ frameIdx ];
-	if ( ! fdesc || ! fdesc.frameptr ) return;
+	const frame = R_GetSpriteFrame( e );
+	if ( frame == null ) return;
 
-	const frame = fdesc.frameptr;
 	const texture = frame.gl_texturenum;
-	if ( ! texture ) return;
+	if ( texture == null ) return;
 
 	// Get or create cached geometry and material for this entity
 	let mesh = e._spriteMesh;
@@ -922,7 +974,7 @@ function R_DrawSpriteModel( e ) {
 
 	}
 
-	// Update billboard vertex positions every frame (camera-facing)
+	// Update billboard vertex positions every frame
 	posAttr = mesh.geometry.attributes.position;
 	positions = posAttr.array;
 
@@ -930,8 +982,24 @@ function R_DrawSpriteModel( e ) {
 	const oy = e.origin[ 1 ];
 	const oz = e.origin[ 2 ];
 
-	const ux = vup[ 0 ], uy = vup[ 1 ], uz = vup[ 2 ];
-	const rx = vright[ 0 ], ry = vright[ 1 ], rz = vright[ 2 ];
+	// SPR_ORIENTED uses entity angles for orientation (bullet marks on walls)
+	// Normal sprites use camera-facing vup/vright
+	let up_vec, right_vec;
+	if ( psprite.type === SPR_ORIENTED ) {
+
+		AngleVectors( e.angles, _sprite_v_forward, _sprite_v_right, _sprite_v_up );
+		up_vec = _sprite_v_up;
+		right_vec = _sprite_v_right;
+
+	} else {
+
+		up_vec = vup;
+		right_vec = vright;
+
+	}
+
+	const ux = up_vec[ 0 ], uy = up_vec[ 1 ], uz = up_vec[ 2 ];
+	const rx = right_vec[ 0 ], ry = right_vec[ 1 ], rz = right_vec[ 2 ];
 	const l = frame.left, r = frame.right, u = frame.up, d = frame.down;
 
 	positions[ 0 ] = ox + ux * d + rx * l;
