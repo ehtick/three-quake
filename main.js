@@ -55,22 +55,6 @@ async function main() {
 
 		}
 
-		// Optionally load pak1.pak (registered version)
-		try {
-
-			const pak1 = await COM_FetchPak( 'pak1.pak', 'pak1.pak' );
-			if ( pak1 ) {
-
-				COM_AddPack( pak1 );
-				Sys_Printf( 'pak1.pak loaded successfully\\n' );
-
-			}
-
-		} catch ( e ) {
-
-			// pak1.pak is optional (shareware doesn't have it)
-
-		}
 
 		// Preload custom deathmatch maps (not in PAK files)
 		await COM_PreloadMaps( [
