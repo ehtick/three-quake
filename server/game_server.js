@@ -7,7 +7,7 @@
 import { Sys_Printf, Sys_FloatTime } from '../src/sys.js';
 import { COM_FetchPak, COM_AddPack, COM_PreloadMaps } from '../src/pak.js';
 import { Cbuf_Init, Cbuf_Execute, Cmd_Init } from '../src/cmd.js';
-import { Host_InitCommands } from '../src/host.js';
+import { Host_InitCommands } from '../src/host_cmd.js';
 import { deathmatch, samelevel, noexit, sys_ticrate } from '../src/host.js';
 import { cls, ca_dedicated } from '../src/client.js';
 import { Memory_Init } from '../src/zone.js';
