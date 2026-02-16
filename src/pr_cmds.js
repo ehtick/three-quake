@@ -26,6 +26,7 @@ import {
 	E_STRING,
 	sv,
 	PR_SetBuiltins,
+	PR_SetTempString,
 } from './progs.js';
 import {
 	ED_Alloc, ED_Free, ED_Print, ED_PrintNum, ED_PrintEdicts,
@@ -811,37 +812,6 @@ function PF_dprint() {
 }
 
 // Temp string for ftos/vtos (in C this is a static buffer in pr_strings space)
-// We use the extra strings mechanism
-let pr_string_temp_offset = - 1;
-
-function setPrStringTemp( str ) {
-
-	// Store temp string and return its offset
-	// For simplicity, we set OFS_RETURN to a string offset
-	// We need to put this in the pr_strings_data so PR_GetString can find it
-	// Use a simple approach: store at a known temp offset
-	// In the C code, pr_string_temp is a static char[128] within the string table.
-	// We emulate by storing at a fixed offset beyond the normal strings.
-
-	// For now, use a JS-side map approach
-	if ( pr_string_temp_offset < 0 ) {
-
-		// Allocate space in strings data for temp string
-		pr_string_temp_offset = pr_strings_data_ext_offset;
-		pr_strings_data_ext_offset += 128;
-
-	}
-
-	// This is a simplification - we just store the string and return an offset
-	_tempStringStore = str;
-	return - 1; // sentinel value - we override PR_GetString for this
-
-}
-
-// Module-level temp string storage
-let _tempStringStore = '';
-let pr_strings_data_ext_offset = 0;
-
 function PF_ftos() {
 
 	const v = G_FLOAT( OFS_PARM0 );
@@ -852,18 +822,8 @@ function PF_ftos() {
 	else
 		str = v.toFixed( 1 );
 
-	// Store in extra strings
-	const encoded = new TextEncoder().encode( str + '\0' );
-	const oldData = pr_strings_data;
-	const newData = new Uint8Array( oldData.length + encoded.length );
-	newData.set( oldData );
-	newData.set( encoded, oldData.length );
-	const ofs = oldData.length;
-
-	// Update global strings data
-	// Note: this imports PR_SetStringsData from progs.js
-	_updateStringsData( newData );
-
+	// Write into the fixed pr_string_temp area (reused each call, like C)
+	const ofs = PR_SetTempString( str );
 	G_INT_SET( OFS_RETURN, ofs );
 
 }
@@ -880,25 +840,9 @@ function PF_vtos() {
 	const v = G_VECTOR( OFS_PARM0 );
 	const str = '\'' + v[ 0 ].toFixed( 1 ) + ' ' + v[ 1 ].toFixed( 1 ) + ' ' + v[ 2 ].toFixed( 1 ) + '\'';
 
-	const encoded = new TextEncoder().encode( str + '\0' );
-	const oldData = pr_strings_data;
-	const newData = new Uint8Array( oldData.length + encoded.length );
-	newData.set( oldData );
-	newData.set( encoded, oldData.length );
-	const ofs = oldData.length;
-
-	_updateStringsData( newData );
-
+	// Write into the fixed pr_string_temp area (reused each call, like C)
+	const ofs = PR_SetTempString( str );
 	G_INT_SET( OFS_RETURN, ofs );
-
-}
-
-// Helper to update strings data (imported lazily to avoid circular deps)
-import { PR_SetStringsData, pr_strings_data } from './progs.js';
-
-function _updateStringsData( newData ) {
-
-	PR_SetStringsData( newData );
 
 }
 

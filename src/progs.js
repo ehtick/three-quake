@@ -158,6 +158,10 @@ export let pr_edict_size = 0; // in bytes (C: sizeof edict_t fields portion)
 
 export let pr_crc = 0;
 
+// Temp string buffer for PF_ftos/PF_vtos (mirrors C's pr_string_temp[128])
+// This is a fixed 128-byte region at the end of pr_strings_data that gets reused.
+export let pr_string_temp_ofs = - 1;
+
 // type_size[etype] - number of int/float slots per type
 export const type_size = [ 1, 1, 1, 3, 1, 1, 1, 1 ];
 
@@ -178,6 +182,24 @@ export function PR_SetGlobalsFloat( f ) { pr_globals_float = f; }
 export function PR_SetGlobalsInt( i ) { pr_globals_int = i; }
 export function PR_SetEdictSize( s ) { pr_edict_size = s; }
 export function PR_SetCRC( c ) { pr_crc = c; }
+export function PR_SetStringTempOfs( o ) { pr_string_temp_ofs = o; }
+
+// Write a string into the fixed pr_string_temp area (128 bytes max).
+// Returns the offset into pr_strings_data. Mirrors C's pr_string_temp usage.
+export function PR_SetTempString( str ) {
+
+	const maxLen = 127; // leave room for null terminator
+	const len = Math.min( str.length, maxLen );
+	for ( let i = 0; i < len; i ++ ) {
+
+		pr_strings_data[ pr_string_temp_ofs + i ] = str.charCodeAt( i );
+
+	}
+
+	pr_strings_data[ pr_string_temp_ofs + len ] = 0; // null terminator
+	return pr_string_temp_ofs;
+
+}
 
 //============================================================================
 // Global access helper macros (ported as functions)

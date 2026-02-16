@@ -23,7 +23,7 @@ import {
 	PR_SetProgs, PR_SetFunctions, PR_SetStrings, PR_SetStringsData,
 	PR_SetGlobalDefs, PR_SetFieldDefs, PR_SetStatements,
 	PR_SetGlobalStruct, PR_SetGlobals, PR_SetGlobalsFloat, PR_SetGlobalsInt,
-	PR_SetEdictSize, PR_SetCRC,
+	PR_SetEdictSize, PR_SetCRC, PR_SetStringTempOfs,
 	EdictFieldAccessor, edict_t,
 	PR_GetString, G_FLOAT, G_INT, G_STRING, G_EDICT, G_EDICTNUM,
 	EDICT_NUM, NUM_FOR_EDICT, EDICT_TO_PROG, PROG_TO_EDICT,
@@ -1106,11 +1106,15 @@ export function PR_LoadProgs( fileData ) {
 
 	PR_SetProgs( header );
 
-	// Parse strings
-	const stringsData = new Uint8Array( fileData, header.ofs_strings, header.numstrings );
-	PR_SetStringsData( stringsData );
+	// Parse strings - allocate with extra 128 bytes for pr_string_temp
+	const PR_STRING_TEMP_SIZE = 128;
+	const stringsDataWithTemp = new Uint8Array( header.numstrings + PR_STRING_TEMP_SIZE );
+	stringsDataWithTemp.set( new Uint8Array( fileData, header.ofs_strings, header.numstrings ) );
+	// Zero-fill the temp area (already done by Uint8Array constructor)
+	PR_SetStringsData( stringsDataWithTemp );
+	PR_SetStringTempOfs( header.numstrings );
 	pr_extra_strings = [];
-	pr_extra_strings_offset = header.numstrings;
+	pr_extra_strings_offset = header.numstrings + PR_STRING_TEMP_SIZE;
 
 	// Parse statements
 	const statements = [];
