@@ -167,7 +167,10 @@ export function R_RenderDlights( cl, scene ) {
 
 			// intensity = time remaining (fades to 0 as light dies)
 			// distance = radius (shrinks via game's decay system)
-			const timeLeft = l.die - cl.time;
+			// Clamp timeLeft: client-side prediction can shift cl.time backwards,
+			// inflating timeLeft well beyond the light's intended duration.
+			// 0.5s is the longest dlight duration (explosions).
+			const timeLeft = Math.min( l.die - cl.time, 0.5 );
 
 			if ( isXRActive() ) {
 
