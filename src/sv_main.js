@@ -290,6 +290,21 @@ export function SV_SendServerinfo( client ) {
 	const clientnum = svs.clients.indexOf( client );
 	MSG_WriteShort( client.message, clientnum + 1 );
 
+	// send movevars for client-side prediction (matches QW sv_user.c:98-108)
+	MSG_WriteByte( client.message, svc_stufftext );
+	MSG_WriteString( client.message, '_movevars'
+		+ ' ' + sv_gravity.value
+		+ ' ' + sv_stopspeed.value
+		+ ' ' + sv_maxspeed.value
+		+ ' ' + 500 // spectatormaxspeed (no cvar in NQ)
+		+ ' ' + sv_accelerate.value
+		+ ' ' + 0.7 // airaccelerate (no cvar in NQ)
+		+ ' ' + 10 // wateraccelerate (no cvar in NQ)
+		+ ' ' + sv_friction.value
+		+ ' ' + 1 // waterfriction (no cvar in NQ)
+		+ ' ' + 1.0 // entgravity
+		+ '\n' );
+
 	MSG_WriteByte( client.message, svc_signonnum );
 	MSG_WriteByte( client.message, 1 );
 

@@ -2,7 +2,9 @@
 // Client-side prediction for smooth movement with low server tick rates
 
 import { VectorCopy } from './mathlib.js';
+import { Q_atof } from './common.js';
 import { cvar_t, Cvar_RegisterVariable } from './cvar.js';
+import { Cmd_AddCommand, Cmd_Argc, Cmd_Argv } from './cmd.js';
 import { pmove, movevars, PlayerMove, PM_HullPointContents, PM_GetOnGround, Pmove_Init,
 	player_mins, player_maxs } from './pmove.js';
 import { CONTENTS_EMPTY } from './bspfile.js';
@@ -712,6 +714,31 @@ export function CL_PredictUsercmd( from, to, cmd, spectator ) {
 
 /*
 ==============
+CL_Movevars_f
+
+Console command handler for _movevars. The server sends this via svc_stufftext
+during signon to sync physics parameters for client-side prediction.
+Matches original QuakeWorld's movevars protocol (QW/server/sv_user.c:98-108).
+==============
+*/
+function CL_Movevars_f() {
+	if ( Cmd_Argc() < 11 )
+		return;
+
+	movevars.gravity = Q_atof( Cmd_Argv( 1 ) );
+	movevars.stopspeed = Q_atof( Cmd_Argv( 2 ) );
+	movevars.maxspeed = Q_atof( Cmd_Argv( 3 ) );
+	movevars.spectatormaxspeed = Q_atof( Cmd_Argv( 4 ) );
+	movevars.accelerate = Q_atof( Cmd_Argv( 5 ) );
+	movevars.airaccelerate = Q_atof( Cmd_Argv( 6 ) );
+	movevars.wateraccelerate = Q_atof( Cmd_Argv( 7 ) );
+	movevars.friction = Q_atof( Cmd_Argv( 8 ) );
+	movevars.waterfriction = Q_atof( Cmd_Argv( 9 ) );
+	movevars.entgravity = Q_atof( Cmd_Argv( 10 ) );
+}
+
+/*
+==============
 CL_PredictMove
 
 Main prediction function - called each frame to predict local player position
@@ -836,6 +863,7 @@ export function CL_InitPrediction() {
 	Cvar_RegisterVariable( cl_nopred );
 	Cvar_RegisterVariable( cl_solid_players );
 	Cvar_RegisterVariable( cl_predict_players );
+	Cmd_AddCommand( '_movevars', CL_Movevars_f );
 	Pmove_Init();
 }
 
