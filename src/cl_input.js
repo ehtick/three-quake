@@ -31,6 +31,14 @@ const _sendmove_buf = {
 	overflowed: false
 };
 const _sendmove_predAngles = new Float32Array( 3 );
+const _sendmove_predCmd = {
+	msec: 0,
+	angles: _sendmove_predAngles,
+	forwardmove: 0,
+	sidemove: 0,
+	upmove: 0,
+	buttons: 0
+};
 
 /*
 ===============================================================================
@@ -404,16 +412,13 @@ export function CL_SendMove( cmd ) {
 	// Store command for client-side prediction (QuakeWorld style)
 	// Build a prediction command structure
 	//
-	const predCmd = {
-		msec: Math.min( 255, Math.floor( host_frametime * 1000 ) ),
-		angles: _sendmove_predAngles,
-		forwardmove: cmd.forwardmove,
-		sidemove: cmd.sidemove,
-		upmove: cmd.upmove,
-		buttons: bits
-	};
+	_sendmove_predCmd.msec = Math.min( 255, Math.floor( host_frametime * 1000 ) );
+	_sendmove_predCmd.forwardmove = cmd.forwardmove;
+	_sendmove_predCmd.sidemove = cmd.sidemove;
+	_sendmove_predCmd.upmove = cmd.upmove;
+	_sendmove_predCmd.buttons = bits;
 	VectorCopy( cl.viewangles, _sendmove_predAngles );
-	CL_StoreCommand( predCmd, realtime );
+	CL_StoreCommand( _sendmove_predCmd, realtime );
 
 	//
 	// Request delta compression of entities

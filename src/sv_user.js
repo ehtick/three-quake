@@ -33,6 +33,9 @@ const _watermove_wishvel = new Float32Array( 3 );
 const _airmove_wishvel = new Float32Array( 3 );
 const _clientthink_v_angle = new Float32Array( 3 );
 const _readclientmove_angle = new Float32Array( 3 );
+const _userfriction_start = new Float32Array( 3 );
+const _userfriction_stop = new Float32Array( 3 );
+const _unspawned_cmd = { forwardmove: 0, sidemove: 0, upmove: 0 };
 
 // world
 let angles = null; // float *
@@ -161,8 +164,8 @@ SV_UserFriction
 export function SV_UserFriction() {
 
 	const vel = velocity;
-	const start = new Float32Array( 3 );
-	const stop = new Float32Array( 3 );
+	const start = _userfriction_start;
+	const stop = _userfriction_stop;
 
 	const speed = Math.sqrt( vel[ 0 ] * vel[ 0 ] + vel[ 1 ] * vel[ 1 ] );
 	if ( speed === 0 )
@@ -706,7 +709,10 @@ export function SV_RunClients() {
 		if ( ! host_client.spawned ) {
 
 			// clear client movement until a new packet is received
-			host_client.cmd = { forwardmove: 0, sidemove: 0, upmove: 0 };
+			_unspawned_cmd.forwardmove = 0;
+			_unspawned_cmd.sidemove = 0;
+			_unspawned_cmd.upmove = 0;
+			host_client.cmd = _unspawned_cmd;
 			continue;
 
 		}

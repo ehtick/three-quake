@@ -679,6 +679,20 @@ const bitcounts = new Int32Array( 16 );
 const _soundPos = new Float32Array( 3 );
 const _staticSoundOrg = new Float32Array( 3 );
 
+// Cached buffers for CL_ParsePlayerInfo (Golden Rule #4)
+const _playerinfo_origin = new Float32Array( 3 );
+const _playerinfo_velocity = new Float32Array( 3 );
+const _playerinfo_cmd_angles = new Float32Array( 3 );
+const _playerinfo_cmd = {
+	msec: 0,
+	angles: _playerinfo_cmd_angles,
+	forwardmove: 0,
+	sidemove: 0,
+	upmove: 0,
+	buttons: 0,
+	impulse: 0
+};
+
 export function CL_ParseUpdate( bits ) {
 
 	if ( cls.signon === SIGNONS - 1 ) {
@@ -1025,7 +1039,7 @@ function CL_ParsePlayerInfo() {
 	const flags = MSG_ReadShort();
 
 	// Always read origin and frame
-	const origin = new Float32Array( 3 );
+	const origin = _playerinfo_origin;
 	origin[ 0 ] = MSG_ReadCoord();
 	origin[ 1 ] = MSG_ReadCoord();
 	origin[ 2 ] = MSG_ReadCoord();
@@ -1042,15 +1056,14 @@ function CL_ParsePlayerInfo() {
 	if ( flags & PF_COMMAND ) {
 
 		const cmdbits = MSG_ReadByte();
-		cmd = {
-			msec: 0,
-			angles: new Float32Array( 3 ),
-			forwardmove: 0,
-			sidemove: 0,
-			upmove: 0,
-			buttons: 0,
-			impulse: 0
-		};
+		cmd = _playerinfo_cmd;
+		cmd.msec = 0;
+		_playerinfo_cmd_angles.fill( 0 );
+		cmd.forwardmove = 0;
+		cmd.sidemove = 0;
+		cmd.upmove = 0;
+		cmd.buttons = 0;
+		cmd.impulse = 0;
 
 		if ( cmdbits & CM_ANGLE1 )
 			cmd.angles[ 0 ] = MSG_ReadAngle16();
@@ -1072,7 +1085,10 @@ function CL_ParsePlayerInfo() {
 	}
 
 	// Read optional velocity
-	const velocity = new Float32Array( 3 );
+	const velocity = _playerinfo_velocity;
+	velocity[ 0 ] = 0;
+	velocity[ 1 ] = 0;
+	velocity[ 2 ] = 0;
 	if ( flags & PF_VELOCITY1 )
 		velocity[ 0 ] = MSG_ReadShort();
 	if ( flags & PF_VELOCITY2 )

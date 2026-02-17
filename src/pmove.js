@@ -17,7 +17,7 @@ const DIST_EPSILON = 0.03125; // 1/32 epsilon for floating point
 export const player_mins = new Float32Array( [ -16, -16, -24 ] );
 export const player_maxs = new Float32Array( [ 16, 16, 32 ] );
 
-// Cached buffers for PM_FlyMove to avoid per-call allocations (Golden Rule #4)
+// Cached buffers to avoid per-call allocations (Golden Rule #4)
 const _pm_flymove_original_velocity = new Float32Array( 3 );
 const _pm_flymove_primal_velocity = new Float32Array( 3 );
 const _pm_flymove_end = new Float32Array( 3 );
@@ -25,6 +25,36 @@ const _pm_flymove_dir = new Float32Array( 3 );
 const _pm_flymove_planes = [];
 for ( let i = 0; i < MAX_CLIP_PLANES; i++ )
 	_pm_flymove_planes[ i ] = new Float32Array( 3 );
+
+// Note: PM_RecursiveHullCheck's `mid` cannot be cached — it's recursive
+const _pm_testpos_mins = new Float32Array( 3 );
+const _pm_testpos_maxs = new Float32Array( 3 );
+const _pm_testpos_test = new Float32Array( 3 );
+const _pm_move_mins = new Float32Array( 3 );
+const _pm_move_maxs = new Float32Array( 3 );
+const _pm_move_offset = new Float32Array( 3 );
+const _pm_move_start_l = new Float32Array( 3 );
+const _pm_move_end_l = new Float32Array( 3 );
+const _pm_friction_start = new Float32Array( 3 );
+const _pm_friction_stop = new Float32Array( 3 );
+const _pm_watermove_wishvel = new Float32Array( 3 );
+const _pm_watermove_wishdir = new Float32Array( 3 );
+const _pm_watermove_dest = new Float32Array( 3 );
+const _pm_watermove_start = new Float32Array( 3 );
+const _pm_groundmove_dest = new Float32Array( 3 );
+const _pm_groundmove_original = new Float32Array( 3 );
+const _pm_groundmove_originalvel = new Float32Array( 3 );
+const _pm_groundmove_down = new Float32Array( 3 );
+const _pm_groundmove_downvel = new Float32Array( 3 );
+const _pm_groundmove_up = new Float32Array( 3 );
+const _pm_airmove_wishvel = new Float32Array( 3 );
+const _pm_airmove_wishdir = new Float32Array( 3 );
+const _pm_catpos_point = new Float32Array( 3 );
+const _pm_waterjump_flatforward = new Float32Array( 3 );
+const _pm_waterjump_spot = new Float32Array( 3 );
+const _pm_nudge_base = new Float32Array( 3 );
+const _pm_spectator_wishvel = new Float32Array( 3 );
+const _pm_spectator_wishdir = new Float32Array( 3 );
 
 // Movement variables (sent from server, used for physics)
 export const movevars = {
@@ -56,6 +86,10 @@ export class pmtrace_t {
 		this.ent = -1;
 	}
 }
+
+// Cached pmtrace_t buffers (must be after class definition)
+const _pm_move_total = new pmtrace_t();
+const _pm_move_trace = new pmtrace_t();
 
 // Physics entity (world + other players/entities to collide with)
 export class physent_t {
@@ -277,7 +311,7 @@ function PM_RecursiveHullCheck( hull, num, p1f, p2f, p1, p2, trace ) {
 	if ( frac > 1 ) frac = 1;
 
 	const midf = p1f + ( p2f - p1f ) * frac;
-	const mid = new Float32Array( 3 );
+	const mid = new Float32Array( 3 ); // must allocate: recursive function needs separate buffer per call
 	for ( let i = 0; i < 3; i++ )
 		mid[ i ] = p1[ i ] + frac * ( p2[ i ] - p1[ i ] );
 
@@ -338,17 +372,14 @@ export function PM_TestPlayerPosition( pos ) {
 		if ( pe.model != null ) {
 			hull = pe.model.hulls[ 1 ]; // hull 1 is player-sized
 		} else {
-			const mins = new Float32Array( 3 );
-			const maxs = new Float32Array( 3 );
-			VectorSubtract( pe.mins, player_maxs, mins );
-			VectorSubtract( pe.maxs, player_mins, maxs );
-			hull = PM_HullForBox( mins, maxs );
+			VectorSubtract( pe.mins, player_maxs, _pm_testpos_mins );
+			VectorSubtract( pe.maxs, player_mins, _pm_testpos_maxs );
+			hull = PM_HullForBox( _pm_testpos_mins, _pm_testpos_maxs );
 		}
 
-		const test = new Float32Array( 3 );
-		VectorSubtract( pos, pe.origin, test );
+		VectorSubtract( pos, pe.origin, _pm_testpos_test );
 
-		if ( PM_HullPointContents( hull, hull.firstclipnode, test ) === CONTENTS_SOLID )
+		if ( PM_HullPointContents( hull, hull.firstclipnode, _pm_testpos_test ) === CONTENTS_SOLID )
 			return false;
 	}
 
@@ -363,9 +394,17 @@ Trace player from start to end, returns trace result
 ================
 */
 export function PM_PlayerMove( start, end ) {
-	const total = new pmtrace_t();
+	const total = _pm_move_total;
+	total.allsolid = false;
+	total.startsolid = false;
+	total.inopen = false;
+	total.inwater = false;
 	total.fraction = 1;
 	total.ent = -1;
+	total.plane.dist = 0;
+	total.plane.normal[ 0 ] = 0;
+	total.plane.normal[ 1 ] = 0;
+	total.plane.normal[ 2 ] = 0;
 	VectorCopy( end, total.endpos );
 
 	for ( let i = 0; i < pmove.numphysent; i++ ) {
@@ -376,25 +415,31 @@ export function PM_PlayerMove( start, end ) {
 		if ( pe.model != null ) {
 			hull = pe.model.hulls[ 1 ];
 		} else {
-			const mins = new Float32Array( 3 );
-			const maxs = new Float32Array( 3 );
-			VectorSubtract( pe.mins, player_maxs, mins );
-			VectorSubtract( pe.maxs, player_mins, maxs );
-			hull = PM_HullForBox( mins, maxs );
+			VectorSubtract( pe.mins, player_maxs, _pm_move_mins );
+			VectorSubtract( pe.maxs, player_mins, _pm_move_maxs );
+			hull = PM_HullForBox( _pm_move_mins, _pm_move_maxs );
 		}
 
-		const offset = new Float32Array( 3 );
+		const offset = _pm_move_offset;
 		VectorCopy( pe.origin, offset );
 
-		const start_l = new Float32Array( 3 );
-		const end_l = new Float32Array( 3 );
+		const start_l = _pm_move_start_l;
+		const end_l = _pm_move_end_l;
 		VectorSubtract( start, offset, start_l );
 		VectorSubtract( end, offset, end_l );
 
 		// fill in a default trace
-		const trace = new pmtrace_t();
-		trace.fraction = 1;
+		const trace = _pm_move_trace;
 		trace.allsolid = true;
+		trace.startsolid = false;
+		trace.inopen = false;
+		trace.inwater = false;
+		trace.fraction = 1;
+		trace.ent = -1;
+		trace.plane.dist = 0;
+		trace.plane.normal[ 0 ] = 0;
+		trace.plane.normal[ 1 ] = 0;
+		trace.plane.normal[ 2 ] = 0;
 		VectorCopy( end, trace.endpos );
 
 		// trace a line through the apropriate clipping hull
@@ -586,8 +631,8 @@ function PM_Friction() {
 
 	// if the leading edge is over a dropoff, increase friction
 	if ( onground !== -1 ) {
-		const start = new Float32Array( 3 );
-		const stop = new Float32Array( 3 );
+		const start = _pm_friction_start;
+		const stop = _pm_friction_stop;
 		start[ 0 ] = stop[ 0 ] = pmove.origin[ 0 ] + vel[ 0 ] / speed * 16;
 		start[ 1 ] = stop[ 1 ] = pmove.origin[ 1 ] + vel[ 1 ] / speed * 16;
 		start[ 2 ] = pmove.origin[ 2 ] + player_mins[ 2 ];
@@ -680,7 +725,7 @@ PM_WaterMove
 ===================
 */
 function PM_WaterMove() {
-	const wishvel = new Float32Array( 3 );
+	const wishvel = _pm_watermove_wishvel;
 
 	// user intentions
 	for ( let i = 0; i < 3; i++ )
@@ -691,7 +736,7 @@ function PM_WaterMove() {
 	else
 		wishvel[ 2 ] += pmove.cmd.upmove;
 
-	const wishdir = new Float32Array( 3 );
+	const wishdir = _pm_watermove_wishdir;
 	VectorCopy( wishvel, wishdir );
 	let wishspeed = VectorNormalize( wishdir );
 
@@ -705,9 +750,9 @@ function PM_WaterMove() {
 	PM_Accelerate( wishdir, wishspeed, movevars.wateraccelerate );
 
 	// assume it is a stair or a slope, so press down from stepheight above
-	const dest = new Float32Array( 3 );
+	const dest = _pm_watermove_dest;
 	VectorMA( pmove.origin, frametime, pmove.velocity, dest );
-	const start = new Float32Array( 3 );
+	const start = _pm_watermove_start;
 	VectorCopy( dest, start );
 	start[ 2 ] += STEPSIZE + 1;
 
@@ -734,7 +779,7 @@ function PM_GroundMove() {
 		return;
 
 	// first try just moving to the destination
-	const dest = new Float32Array( 3 );
+	const dest = _pm_groundmove_dest;
 	dest[ 0 ] = pmove.origin[ 0 ] + pmove.velocity[ 0 ] * frametime;
 	dest[ 1 ] = pmove.origin[ 1 ] + pmove.velocity[ 1 ] * frametime;
 	dest[ 2 ] = pmove.origin[ 2 ];
@@ -748,16 +793,16 @@ function PM_GroundMove() {
 
 	// try sliding forward both on ground and up 16 pixels
 	// take the move that goes farthest
-	const original = new Float32Array( 3 );
-	const originalvel = new Float32Array( 3 );
+	const original = _pm_groundmove_original;
+	const originalvel = _pm_groundmove_originalvel;
 	VectorCopy( pmove.origin, original );
 	VectorCopy( pmove.velocity, originalvel );
 
 	// slide move
 	PM_FlyMove();
 
-	const down = new Float32Array( 3 );
-	const downvel = new Float32Array( 3 );
+	const down = _pm_groundmove_down;
+	const downvel = _pm_groundmove_downvel;
 	VectorCopy( pmove.origin, down );
 	VectorCopy( pmove.velocity, downvel );
 
@@ -790,7 +835,7 @@ function PM_GroundMove() {
 		VectorCopy( trace.endpos, pmove.origin );
 	}
 
-	const upMove = new Float32Array( 3 );
+	const upMove = _pm_groundmove_up;
 	VectorCopy( pmove.origin, upMove );
 
 	// decide which one went farther
@@ -822,12 +867,12 @@ function PM_AirMove() {
 	VectorNormalize( forward );
 	VectorNormalize( right );
 
-	const wishvel = new Float32Array( 3 );
+	const wishvel = _pm_airmove_wishvel;
 	for ( let i = 0; i < 2; i++ )
 		wishvel[ i ] = forward[ i ] * fmove + right[ i ] * smove;
 	wishvel[ 2 ] = 0;
 
-	const wishdir = new Float32Array( 3 );
+	const wishdir = _pm_airmove_wishdir;
 	VectorCopy( wishvel, wishdir );
 	let wishspeed = VectorNormalize( wishdir );
 
@@ -859,7 +904,7 @@ PM_CatagorizePosition
 =============
 */
 function PM_CatagorizePosition() {
-	const point = new Float32Array( 3 );
+	const point = _pm_catpos_point;
 
 	// if the player hull point one unit down is solid, the player is on ground
 
@@ -971,13 +1016,13 @@ function CheckWaterJump() {
 		return;
 
 	// see if near an edge
-	const flatforward = new Float32Array( 3 );
+	const flatforward = _pm_waterjump_flatforward;
 	flatforward[ 0 ] = forward[ 0 ];
 	flatforward[ 1 ] = forward[ 1 ];
 	flatforward[ 2 ] = 0;
 	VectorNormalize( flatforward );
 
-	const spot = new Float32Array( 3 );
+	const spot = _pm_waterjump_spot;
 	VectorMA( pmove.origin, 24, flatforward, spot );
 	spot[ 2 ] += 8;
 	let cont = PM_PointContents( spot );
@@ -1006,7 +1051,7 @@ allow for the cut precision of the net coordinates
 =================
 */
 function NudgePosition() {
-	const base = new Float32Array( 3 );
+	const base = _pm_nudge_base;
 	VectorCopy( pmove.origin, base );
 
 	for ( let i = 0; i < 3; i++ )
@@ -1060,12 +1105,12 @@ function SpectatorMove() {
 	VectorNormalize( forward );
 	VectorNormalize( right );
 
-	const wishvel = new Float32Array( 3 );
+	const wishvel = _pm_spectator_wishvel;
 	for ( let i = 0; i < 3; i++ )
 		wishvel[ i ] = forward[ i ] * fmove + right[ i ] * smove;
 	wishvel[ 2 ] += pmove.cmd.upmove;
 
-	const wishdir = new Float32Array( 3 );
+	const wishdir = _pm_spectator_wishdir;
 	VectorCopy( wishvel, wishdir );
 	let wishspeed = VectorNormalize( wishdir );
 

@@ -330,6 +330,20 @@ export function CL_StoreCommand( cmd, senttime ) {
 const _predFrom = new player_state_t();
 const _predTo = new player_state_t();
 
+// Cached buffers for CL_PredictUsercmd split-command path (Golden Rule #4)
+const _splitTemp = new player_state_t();
+const _splitCmd = {
+	msec: 0,
+	angles: null, // shared with original cmd.angles (no copy needed)
+	forwardmove: 0,
+	sidemove: 0,
+	upmove: 0,
+	buttons: 0
+};
+
+// Cached buffer for CL_NudgePosition (Golden Rule #4)
+const _nudge_base = new Float32Array( 3 );
+
 /*
 =================
 CL_SetUpPlayerPrediction
@@ -633,7 +647,7 @@ function CL_NudgePosition() {
 	if ( PM_HullPointContents( hull, 0, pmove.origin ) === CONTENTS_EMPTY )
 		return;
 
-	const base = new Float32Array( 3 );
+	const base = _nudge_base;
 	VectorCopy( pmove.origin, base );
 
 	for ( let x = -1; x <= 1; x++ ) {
@@ -656,18 +670,15 @@ Predict the result of a single user command
 export function CL_PredictUsercmd( from, to, cmd, spectator ) {
 	// Split up very long moves
 	if ( cmd.msec > 50 ) {
-		const temp = new player_state_t();
-		const split = {
-			msec: Math.floor( cmd.msec / 2 ),
-			angles: cmd.angles,
-			forwardmove: cmd.forwardmove,
-			sidemove: cmd.sidemove,
-			upmove: cmd.upmove,
-			buttons: cmd.buttons
-		};
+		_splitCmd.msec = Math.floor( cmd.msec / 2 );
+		_splitCmd.angles = cmd.angles;
+		_splitCmd.forwardmove = cmd.forwardmove;
+		_splitCmd.sidemove = cmd.sidemove;
+		_splitCmd.upmove = cmd.upmove;
+		_splitCmd.buttons = cmd.buttons;
 
-		CL_PredictUsercmd( from, temp, split, spectator );
-		CL_PredictUsercmd( temp, to, split, spectator );
+		CL_PredictUsercmd( from, _splitTemp, _splitCmd, spectator );
+		CL_PredictUsercmd( _splitTemp, to, _splitCmd, spectator );
 		return;
 	}
 
