@@ -1562,6 +1562,9 @@ export function SV_SpawnServer( server ) {
 	Con_DPrintf( 'SpawnServer: ' + server + '\n' );
 	svs.changelevel_issued = false; // now safe to issue another
 
+	// Reset cached player model index so it's re-looked-up for the new map
+	sv_playermodel = 0;
+
 	//
 	// tell all connected clients that we are going to a new level
 	//
