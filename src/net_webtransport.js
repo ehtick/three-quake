@@ -10,7 +10,7 @@ import {
 	hostCacheCount, set_hostCacheCount,
 	hostcache
 } from './net.js';
-import { M_ConnectionError } from './menu.js';
+import { M_ConnectionError, M_Menu_Main_f } from './menu.js';
 import { set_key_dest, key_menu } from './keys.js';
 
 // WebTransport connection state
