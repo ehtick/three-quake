@@ -98,6 +98,8 @@ const MAX_PENDING_MESSAGES = 100;
 //
 // Backpressure: if the game loop isn't consuming messages fast enough
 // (pendingMessages piling up), yield longer to let it catch up.
+// When no backpressure, return a cached resolved promise to avoid allocation.
+const _resolvedPromise: Promise<void> = Promise.resolve();
 function _yieldAfterRead(conn: ClientConnection): Promise<void> {
 	const pending = conn.pendingMessages.length;
 	if (pending > 4) {
@@ -108,10 +110,9 @@ function _yieldAfterRead(conn: ClientConnection): Promise<void> {
 		// Light backpressure: game loop has unprocessed messages
 		return new Promise(resolve => setTimeout(resolve, 10));
 	}
-	// No backpressure: just yield to macrotask queue so game loop can run.
-	// setTimeout(0) gives ~1-4ms on most systems — enough to interleave
-	// with the 50ms game tick.
-	return new Promise(resolve => setTimeout(resolve, 0));
+	// No backpressure: return immediately. reader.read() already blocks
+	// naturally when no data is available, which yields to the event loop.
+	return _resolvedPromise;
 }
 
 // Callback for socket allocation (injected from game_server.js)
@@ -351,10 +352,10 @@ function _startBackgroundReaders(
 	(async () => {
 		try {
 			while (conn.connected && conn.reliableReader) {
-				const msg = await _readFramedMessage(conn.reliableReader);
-				if (msg === null) break;
+				const data = await _readFramedMessage(conn.reliableReader);
+				if (data === null) break;
 
-				conn.pendingMessages.push({ reliable: true, data: msg.data });
+				conn.pendingMessages.push({ reliable: true, data });
 				conn.lastMessageTime = Date.now();
 
 				// If messages are piling up, the game loop isn't consuming them
@@ -383,10 +384,10 @@ function _startBackgroundReaders(
 	(async () => {
 		try {
 			while (conn.connected && conn.unreliableReader) {
-				const msg = await _readFramedMessage(conn.unreliableReader);
-				if (msg === null) break;
+				const data = await _readFramedMessage(conn.unreliableReader);
+				if (data === null) break;
 
-				conn.pendingMessages.push({ reliable: false, data: msg.data });
+				conn.pendingMessages.push({ reliable: false, data });
 				conn.lastMessageTime = Date.now();
 
 				// If messages are piling up, the game loop isn't consuming them
@@ -415,30 +416,26 @@ function _startBackgroundReaders(
 /**
  * Read a framed message from the stream
  * Frame format: [length:2][data:N]
- * Returns: { data: Uint8Array } or null on error
+ * Returns: Uint8Array or null on error/EOF
  */
+const _emptyMessage = new Uint8Array(0);
 async function _readFramedMessage(
 	reader: ReadableStreamDefaultReader<Uint8Array>
-): Promise<{ data: Uint8Array } | null> {
+): Promise<Uint8Array | null> {
 	// Read header (2 bytes)
 	const header = await _readExact(reader, 2);
-	if (!header) {
+	if (header === null) {
 		return null;
 	}
 
 	const length = header[0] | (header[1] << 8);
 
 	if (length === 0) {
-		return { data: new Uint8Array(0) };
+		return _emptyMessage;
 	}
 
 	// Read message data
-	const data = await _readExact(reader, length);
-	if (!data) {
-		return null;
-	}
-
-	return { data };
+	return await _readExact(reader, length);
 }
 
 // Buffer for leftover bytes from previous reads (per-reader tracking)
@@ -454,48 +451,83 @@ function _getReaderBuffer(reader: ReadableStreamDefaultReader<Uint8Array>): { da
 }
 
 /**
- * Read exactly n bytes from a reader, with buffering for leftover bytes
+ * Read exactly n bytes from a reader, with buffering for leftover bytes.
+ * Optimized to avoid allocations in the common case where reader.read()
+ * returns exactly the right number of bytes.
  */
 async function _readExact(
 	reader: ReadableStreamDefaultReader<Uint8Array>,
 	n: number
 ): Promise<Uint8Array | null> {
-	const result = new Uint8Array(n);
-	let offset = 0;
 	const buf = _getReaderBuffer(reader);
 
-	// First, use any leftover bytes from previous read
-	if (buf.data && buf.offset < buf.data.length) {
-		const available = buf.data.length - buf.offset;
-		const bytesToCopy = Math.min(available, n);
-		result.set(buf.data.subarray(buf.offset, buf.offset + bytesToCopy), 0);
-		offset = bytesToCopy;
-		buf.offset += bytesToCopy;
+	// Fast path: no leftover buffer, read directly from stream
+	if (buf.data === null) {
+		const { value, done } = await reader.read();
+		if (done) return null;
+		if (value.length === 0) return null;
 
-		// Clear buffer if fully consumed
-		if (buf.offset >= buf.data.length) {
-			buf.data = null;
-			buf.offset = 0;
+		if (value.length === n) {
+			// Exact match — zero copy, no allocation
+			return value;
 		}
+
+		if (value.length > n) {
+			// More data than needed — return slice, save leftover
+			buf.data = value;
+			buf.offset = n;
+			return value.subarray(0, n);
+		}
+
+		// Less data than needed — fall through to accumulation path
+		const result = new Uint8Array(n);
+		result.set(value, 0);
+		let offset = value.length;
+
+		while (offset < n) {
+			const chunk = await reader.read();
+			if (chunk.done) return null;
+			if (chunk.value.length === 0) return null;
+
+			const bytesToCopy = Math.min(chunk.value.length, n - offset);
+			result.set(chunk.value.subarray(0, bytesToCopy), offset);
+			offset += bytesToCopy;
+
+			if (bytesToCopy < chunk.value.length) {
+				buf.data = chunk.value;
+				buf.offset = bytesToCopy;
+			}
+		}
+		return result;
 	}
 
-	// Read more data if needed
+	// Slow path: leftover buffer exists, must accumulate
+	const result = new Uint8Array(n);
+	let offset = 0;
+
+	const available = buf.data.length - buf.offset;
+	const bytesToCopy = Math.min(available, n);
+	result.set(buf.data.subarray(buf.offset, buf.offset + bytesToCopy), 0);
+	offset = bytesToCopy;
+	buf.offset += bytesToCopy;
+
+	if (buf.offset >= buf.data.length) {
+		buf.data = null;
+		buf.offset = 0;
+	}
+
 	while (offset < n) {
 		const { value, done } = await reader.read();
 		if (done) return null;
-
-		// Guard against zero-length reads (can happen during stream closing).
-		// Without this check, offset never advances and we spin forever.
 		if (value.length === 0) return null;
 
-		const bytesToCopy = Math.min(value.length, n - offset);
-		result.set(value.subarray(0, bytesToCopy), offset);
-		offset += bytesToCopy;
+		const chunkCopy = Math.min(value.length, n - offset);
+		result.set(value.subarray(0, chunkCopy), offset);
+		offset += chunkCopy;
 
-		// Save leftover bytes for next read
-		if (bytesToCopy < value.length) {
+		if (chunkCopy < value.length) {
 			buf.data = value;
-			buf.offset = bytesToCopy;
+			buf.offset = chunkCopy;
 		}
 	}
 
