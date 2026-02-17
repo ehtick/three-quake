@@ -247,6 +247,8 @@ async function _acceptConnections(): Promise<void> {
 			} catch (error) {
 				if (quicEndpoint) {
 					Sys_Printf('Accept error: ' + (error as Error).message + '\n');
+					// Delay before retrying to prevent 100% CPU spin if accept() fails repeatedly
+					await new Promise(resolve => setTimeout(resolve, 100));
 				}
 			}
 		}

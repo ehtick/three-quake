@@ -102,7 +102,7 @@ const _vid = {
 let _cls = { state: 0, signon: 0, demoplayback: false };
 let _cl = { intermission: 0, paused: false, worldmodel: null, time: 0,
 	last_received_message: 0 };
-let _r_refdef = _r_refdef_canonical;
+let _r_refdef = null; // deferred: set in SCR_Init to avoid circular dep in Deno
 let _V_RenderView = null;
 let _V_UpdatePalette = null;
 let _GL_BeginRendering = null;
@@ -403,6 +403,8 @@ SCR_Init
 ==================
 */
 export function SCR_Init() {
+
+	if ( _r_refdef === null ) _r_refdef = _r_refdef_canonical;
 
 	Cvar_RegisterVariable( scr_fov );
 	Cvar_RegisterVariable( scr_viewsize );

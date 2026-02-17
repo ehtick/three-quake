@@ -351,13 +351,23 @@ function Host_ServerFrame() {
 	SV_CheckForNewClients();
 
 	// Read client messages and run client commands
+	const t0 = performance.now();
 	SV_RunClients();
+	const t1 = performance.now();
 
 	// Run physics
 	SV_Physics();
+	const t2 = performance.now();
 
 	// Send messages to all clients
 	SV_SendClientMessages();
+	const t3 = performance.now();
+
+	// Debug: log slow frames
+	const total = t3 - t0;
+	if (total > 20 || frameCount <= 5) {
+		Sys_Printf('[FrameTiming] RunClients=' + (t1 - t0).toFixed(1) + 'ms Physics=' + (t2 - t1).toFixed(1) + 'ms Send=' + (t3 - t2).toFixed(1) + 'ms total=' + total.toFixed(1) + 'ms\n');
+	}
 
 	// Track activity for room servers (idle timeout)
 	if (CONFIG.roomId !== null) {

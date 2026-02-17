@@ -39,42 +39,7 @@ Maps DOM event.code / event.key values to Quake K_* constants.
 ===========================================================================
 */
 
-const codeToQuakeKey = {
-	'Tab': K_TAB,
-	'Enter': K_ENTER,
-	'Escape': K_ESCAPE,
-	'Space': K_SPACE,
-	'Backspace': K_BACKSPACE,
-	'ArrowUp': K_UPARROW,
-	'ArrowDown': K_DOWNARROW,
-	'ArrowLeft': K_LEFTARROW,
-	'ArrowRight': K_RIGHTARROW,
-	'AltLeft': K_ALT,
-	'AltRight': K_ALT,
-	'ControlLeft': K_CTRL,
-	'ControlRight': K_CTRL,
-	'ShiftLeft': K_SHIFT,
-	'ShiftRight': K_SHIFT,
-	'F1': K_F1,
-	'F2': K_F2,
-	'F3': K_F3,
-	'F4': K_F4,
-	'F5': K_F5,
-	'F6': K_F6,
-	'F7': K_F7,
-	'F8': K_F8,
-	'F9': K_F9,
-	'F10': K_F10,
-	'F11': K_F11,
-	'F12': K_F12,
-	'Insert': K_INS,
-	'Delete': K_DEL,
-	'PageDown': K_PGDN,
-	'PageUp': K_PGUP,
-	'Home': K_HOME,
-	'End': K_END,
-	'Pause': K_PAUSE,
-};
+let codeToQuakeKey = {}; // built in IN_Init to avoid circular dep in Deno
 
 /*
 ===========================================================================
@@ -436,6 +401,44 @@ IN_Init
 export function IN_Init( element ) {
 
 	targetElement = element || document.body;
+
+	// Build key mapping (deferred from module scope to avoid circular dep in Deno)
+	codeToQuakeKey = {
+		'Tab': K_TAB,
+		'Enter': K_ENTER,
+		'Escape': K_ESCAPE,
+		'Space': K_SPACE,
+		'Backspace': K_BACKSPACE,
+		'ArrowUp': K_UPARROW,
+		'ArrowDown': K_DOWNARROW,
+		'ArrowLeft': K_LEFTARROW,
+		'ArrowRight': K_RIGHTARROW,
+		'AltLeft': K_ALT,
+		'AltRight': K_ALT,
+		'ControlLeft': K_CTRL,
+		'ControlRight': K_CTRL,
+		'ShiftLeft': K_SHIFT,
+		'ShiftRight': K_SHIFT,
+		'F1': K_F1,
+		'F2': K_F2,
+		'F3': K_F3,
+		'F4': K_F4,
+		'F5': K_F5,
+		'F6': K_F6,
+		'F7': K_F7,
+		'F8': K_F8,
+		'F9': K_F9,
+		'F10': K_F10,
+		'F11': K_F11,
+		'F12': K_F12,
+		'Insert': K_INS,
+		'Delete': K_DEL,
+		'PageDown': K_PGDN,
+		'PageUp': K_PGUP,
+		'Home': K_HOME,
+		'End': K_END,
+		'Pause': K_PAUSE,
+	};
 
 	// Register cvars
 	Cvar_RegisterVariable( sensitivity );

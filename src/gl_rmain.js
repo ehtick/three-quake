@@ -91,7 +91,10 @@ export const MAX_VISEDICTS = 256;
 // Globals from gl_rmain.c
 //============================================================================
 
-export const r_worldentity = new entity_t();
+// Deferred initialization — entity_t may not be available at module load time
+// due to circular imports (gl_rmain -> gl_model -> gl_mesh -> gl_rmisc -> gl_rmain).
+// Initialized in R_Init().
+export let r_worldentity = null;
 
 export let r_cache_thrash = false; // compatability
 
@@ -1225,6 +1228,9 @@ function R_Mirror() {
 export function R_Init() {
 
 	Con_Printf( 'R_Init' );
+
+	// Initialize r_worldentity here (deferred from module scope to avoid circular dep crash)
+	r_worldentity = new entity_t();
 
 	// create the Three.js scene
 	scene = new THREE.Scene();

@@ -1199,7 +1199,7 @@ export function WT_SendUnreliableMessage( sock, data ) {
 	}
 
 	// Check for previous async error
-	if ( conn.error ) {
+	if ( conn.error != null ) {
 
 		Con_DPrintf( 'WT_SendUnreliableMessage: previous error detected\n' );
 		return - 1;
