@@ -80,7 +80,7 @@ async function main() {
 		// Preload custom menu images
 		try {
 
-			await Draw_CachePicFromPNG( 'gfx/continue.lmp', 'img/continue.png' );
+			await Draw_CachePicFromPNG( 'gfx/mainmenu_ext.lmp', 'mainmenu.png' );
 			Sys_Printf( 'Loaded custom menu images\\n' );
 
 		} catch ( e ) {

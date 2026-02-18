@@ -628,6 +628,26 @@ export function Draw_TransPic( x, y, pic ) {
 
 /*
 =============
+Draw_SubPic
+
+Draws a vertical sub-region of a pic. Used for the extended main menu image
+where we sometimes need to skip the "Continue" row at the top.
+=============
+*/
+export function Draw_SubPic( x, y, pic, srcY, srcH ) {
+
+	if ( x < 0 || y < 0 || pic == null ) return;
+
+	if ( pic.canvas ) {
+
+		overlayCtx.drawImage( pic.canvas, 0, srcY, pic.width, srcH, x, y, pic.width, srcH );
+
+	}
+
+}
+
+/*
+=============
 Draw_TransPicTranslate
 
 Only used for the player color selection menu.

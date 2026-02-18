@@ -47,6 +47,7 @@ export const m_lanconfig = 15;
 export const m_gameoptions = 16;
 export const m_search = 17;
 export const m_slist = 18;
+export const m_credits = 19;
 
 export let m_state = m_none;
 export let m_entersound = false;
@@ -243,6 +244,7 @@ let _Draw_FadeScreen = null;
 let _Draw_ConsoleBackground = null;
 let _Draw_String = null;
 let _Draw_TransPicTranslate = null;
+let _Draw_SubPic = null;
 let _S_LocalSound = null;
 let _SCR_BeginLoadingPlaque = null;
 let _SCR_EndLoadingPlaque = null;
@@ -278,6 +280,7 @@ export function M_SetExternals( externals ) {
 	if ( externals.WT_CreateRoom ) _WT_CreateRoom = externals.WT_CreateRoom;
 	if ( externals.cl_name ) _cl_name = externals.cl_name;
 	if ( externals.Draw_TransPicTranslate ) _Draw_TransPicTranslate = externals.Draw_TransPicTranslate;
+	if ( externals.Draw_SubPic ) _Draw_SubPic = externals.Draw_SubPic;
 
 }
 
@@ -341,6 +344,13 @@ function M_DrawTransPic( x, y, pic ) {
 
 	if ( _Draw_TransPic && pic )
 		_Draw_TransPic( x + ( ( _vid.width - 320 ) >> 1 ), y + ( ( _vid.height - 200 ) >> 1 ), pic );
+
+}
+
+function M_DrawSubPic( x, y, pic, srcY, srcH ) {
+
+	if ( _Draw_SubPic && pic )
+		_Draw_SubPic( x + ( ( _vid.width - 320 ) >> 1 ), y + ( ( _vid.height - 200 ) >> 1 ), pic, srcY, srcH );
 
 }
 
@@ -556,15 +566,36 @@ function M_Main_Draw() {
 	const p = _Draw_CachePic( 'gfx/ttl_main.lmp' );
 	M_DrawPic( ( 320 - ( p ? p.width : 0 ) ) / 2, 4, p );
 
-	// If in-game, show Continue option first, then the regular menu below it
-	if ( inGame ) {
+	// Use the extended menu image (Continue + 5 items) if available, otherwise fall back to PAK images
+	const extPic = _Draw_CachePic( 'gfx/mainmenu_ext.lmp' );
 
-		M_DrawTransPic( 72, 32, _Draw_CachePic( 'gfx/continue.lmp' ) );
-		M_DrawTransPic( 72, 52, _Draw_CachePic( 'gfx/mainmenu.lmp' ) );
+	if ( extPic != null ) {
+
+		if ( inGame ) {
+
+			// Draw full image (Continue + 5 items)
+			M_DrawTransPic( 72, 32, extPic );
+
+		} else {
+
+			// Skip the Continue row (first 21px), draw only the 5 regular items
+			M_DrawSubPic( 72, 32, extPic, 21, 112 );
+
+		}
 
 	} else {
 
-		M_DrawTransPic( 72, 32, _Draw_CachePic( 'gfx/mainmenu.lmp' ) );
+		// Fallback to original PAK images
+		if ( inGame ) {
+
+			M_DrawTransPic( 72, 32, _Draw_CachePic( 'gfx/continue.lmp' ) );
+			M_DrawTransPic( 72, 52, _Draw_CachePic( 'gfx/mainmenu.lmp' ) );
+
+		} else {
+
+			M_DrawTransPic( 72, 32, _Draw_CachePic( 'gfx/mainmenu.lmp' ) );
+
+		}
 
 	}
 
@@ -627,7 +658,7 @@ function M_Main_Key( key ) {
 					M_Menu_Options_f();
 					break;
 				case 3:
-					M_Menu_Help_f();
+					M_Menu_Credits_f();
 					break;
 				case 4:
 					// Exit fullscreen when entering quit menu
@@ -2032,51 +2063,55 @@ function M_Setup_Key( key ) {
 /*
 ==============================================================================
 
-			HELP MENU
+			CREDITS MENU
 
 ==============================================================================
 */
 
-let m_help_page = 0;
-const NUM_HELP_PAGES = 6;
-
-function M_Menu_Help_f() {
+function M_Menu_Credits_f() {
 
 	setKeyDest( key_menu );
-	m_state = m_help;
+	m_state = m_credits;
 	m_entersound = true;
-	m_help_page = 0;
 
 }
 
-function M_Help_Draw() {
+function M_Credits_Draw() {
 
-	if ( ! _Draw_CachePic ) return;
-	M_DrawPic( 0, 0, _Draw_CachePic( 'gfx/help' + m_help_page + '.lmp' ) );
+	M_DrawTextBox( 0, 0, 38, 23 );
+	M_PrintWhite( 16, 12, '  Quake version 1.09 by id Software\n' );
+	M_PrintWhite( 16, 28, 'Programming        Art \n' );
+	M_Print( 16, 36, ' John Carmack       Adrian Carmack\n' );
+	M_Print( 16, 44, ' Michael Abrash     Kevin Cloud\n' );
+	M_Print( 16, 52, ' John Cash          Paul Steed\n' );
+	M_Print( 16, 60, ' Dave \'Zoid\' Kirsch\n' );
+	M_PrintWhite( 16, 76, 'Design             Biz\n' );
+	M_Print( 16, 84, ' John Romero        Jay Wilbur\n' );
+	M_Print( 16, 92, ' Sandy Petersen     Mike Wilson\n' );
+	M_Print( 16, 100, ' American McGee     Donna Jackson\n' );
+	M_Print( 16, 108, ' Tim Willits        Todd Hollenshead\n' );
+	M_PrintWhite( 16, 124, 'Support            Id Mom\n' );
+	M_Print( 16, 132, ' Barrett Alexander  Shawn Green\n' );
+	M_PrintWhite( 16, 148, 'Web port\n' );
+	M_Print( 16, 156, ' mrdoob + claude opus\n' );
 
 }
 
-function M_Help_Key( key ) {
+function M_Credits_Key( key ) {
 
 	switch ( key ) {
 
 		case K_ESCAPE:
 			M_Menu_Main_f();
 			break;
-		case K_UPARROW:
-		case K_RIGHTARROW:
-			m_entersound = true;
-			if ( ++ m_help_page >= NUM_HELP_PAGES )
-				m_help_page = 0;
-			break;
-		case K_DOWNARROW:
-		case K_LEFTARROW:
-			m_entersound = true;
-			if ( -- m_help_page < 0 )
-				m_help_page = NUM_HELP_PAGES - 1;
-			break;
 
 	}
+
+}
+
+function M_Credits_Touch( vx, vy ) {
+
+	M_Credits_Key( K_ESCAPE );
 
 }
 
@@ -2098,21 +2133,9 @@ function M_Menu_Quit_f() {
 
 function M_Quit_Draw() {
 
-	M_DrawTextBox( 0, 0, 38, 23 );
-	M_PrintWhite( 16, 12, '  Quake version 1.09 by id Software\n' );
-	M_PrintWhite( 16, 28, 'Programming        Art \n' );
-	M_Print( 16, 36, ' John Carmack       Adrian Carmack\n' );
-	M_Print( 16, 44, ' Michael Abrash     Kevin Cloud\n' );
-	M_Print( 16, 52, ' John Cash          Paul Steed\n' );
-	M_Print( 16, 60, ' Dave \'Zoid\' Kirsch\n' );
-	M_PrintWhite( 16, 76, 'Design             Biz\n' );
-	M_Print( 16, 84, ' John Romero        Jay Wilbur\n' );
-	M_Print( 16, 92, ' Sandy Petersen     Mike Wilson\n' );
-	M_Print( 16, 100, ' American McGee     Donna Jackson\n' );
-	M_Print( 16, 108, ' Tim Willits        Todd Hollenshead\n' );
-	M_PrintWhite( 16, 124, 'Support            Id Mom\n' );
-	M_Print( 16, 132, ' Barrett Alexander  Shawn Green\n' );
-	M_PrintWhite( 16, 148, 'Press y to quit\n' );
+	M_DrawTextBox( 56, 76, 24, 4 );
+	M_Print( 64, 84, '  Are you sure you want' );
+	M_Print( 64, 92, '  to quit? (Y/N)' );
 
 }
 
@@ -2191,7 +2214,8 @@ export function M_Init() {
 	Cmd_AddCommand( 'menu_options', M_Menu_Options_f );
 	Cmd_AddCommand( 'menu_keys', M_Menu_Keys_f );
 	Cmd_AddCommand( 'menu_video', M_Menu_Video_f );
-	Cmd_AddCommand( 'help', M_Menu_Help_f );
+	Cmd_AddCommand( 'help', M_Menu_Credits_f );
+	Cmd_AddCommand( 'menu_credits', M_Menu_Credits_f );
 	Cmd_AddCommand( 'menu_quit', M_Menu_Quit_f );
 	Cmd_AddCommand( 'menu_lanconfig', M_Menu_LanConfig_f );
 	Cmd_AddCommand( 'menu_gameoptions', M_Menu_GameOptions_f );
@@ -2217,7 +2241,7 @@ export function M_Keydown( key ) {
 		case m_options: M_Options_Key( key ); return;
 		case m_keys: M_Keys_Key( key ); return;
 		case m_video: M_Video_Key( key ); return;
-		case m_help: M_Help_Key( key ); return;
+		case m_credits: M_Credits_Key( key ); return;
 		case m_quit: M_Quit_Key( key ); return;
 		case m_lanconfig: M_LanConfig_Key( key ); return;
 		case m_gameoptions: M_GameOptions_Key( key ); return;
@@ -2266,7 +2290,7 @@ export function M_Draw() {
 		case m_options: M_Options_Draw(); break;
 		case m_keys: M_Keys_Draw(); break;
 		case m_video: M_Video_Draw(); break;
-		case m_help: M_Help_Draw(); break;
+		case m_credits: M_Credits_Draw(); break;
 		case m_quit: M_Quit_Draw(); break;
 		case m_lanconfig: M_LanConfig_Draw(); break;
 		case m_gameoptions: M_GameOptions_Draw(); break;
@@ -2352,8 +2376,8 @@ export function M_TouchInput( touchX, touchY, screenWidth, screenHeight ) {
 			M_Keys_Touch( vx, vy );
 			break;
 
-		case m_help:
-			M_Help_Touch( vx, vy );
+		case m_credits:
+			M_Credits_Touch( vx, vy );
 			break;
 
 		case m_quit:
@@ -2478,13 +2502,6 @@ function M_Keys_Touch( vx, vy ) {
 		}
 
 	}
-
-}
-
-// Help menu touch - tap anywhere to go to next page
-function M_Help_Touch( vx, vy ) {
-
-	M_Help_Key( K_ENTER );
 
 }
 
