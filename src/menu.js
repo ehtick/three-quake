@@ -2092,7 +2092,7 @@ function M_Credits_Draw() {
 	M_Print( 16, 108, ' Tim Willits        Todd Hollenshead\n' );
 	M_PrintWhite( 16, 124, 'Support            Id Mom\n' );
 	M_Print( 16, 132, ' Barrett Alexander  Shawn Green\n' );
-	M_PrintWhite( 16, 148, 'Web port\n' );
+	M_PrintWhite( 16, 148, 'JavaScript port\n' );
 	M_Print( 16, 156, ' mrdoob + claude opus\n' );
 
 }
