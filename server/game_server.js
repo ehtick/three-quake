@@ -40,6 +40,7 @@ import {
 	WT_SetDirectMode,
 	WT_SetSocketFreer,
 	WT_SetMaxClientsCallback,
+	WT_GetMaxPendingWrites,
 } from './net_webtransport_server.ts';
 import { NET_NewQSocket, NET_FreeQSocket } from '../src/net_main.js';
 
@@ -309,7 +310,8 @@ function Host_ServerFrame() {
 	frameCount++;
 	if (realtime - lastHeartbeat >= HEARTBEAT_INTERVAL) {
 		const playerCount = countActivePlayers();
-		Sys_Printf('[Heartbeat] time=' + Math.floor(realtime) + ' frames=' + frameCount + ' players=' + playerCount + ' sv.active=' + sv.active + '\n');
+		const maxPW = WT_GetMaxPendingWrites();
+		Sys_Printf('[Heartbeat] time=' + Math.floor(realtime) + ' frames=' + frameCount + ' players=' + playerCount + ' sv.active=' + sv.active + ' maxPendingWrites=' + maxPW + '\n');
 		lastHeartbeat = realtime;
 	}
 

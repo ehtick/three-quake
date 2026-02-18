@@ -35,6 +35,7 @@ interface ClientConnection {
 	connected: boolean;
 	address: string;
 	lastMessageTime: number;
+	pendingWrites: number;
 }
 
 // Socket structure compatible with Quake's qsocket_t
@@ -86,6 +87,15 @@ const NET_MAXMESSAGE = 8192;
 // The game loop consumes messages at 20Hz — if hundreds pile up, something is wrong.
 const MAX_PENDING_MESSAGES = 100;
 
+// Write backpressure limits.
+// When writer.write() is called without await, each call queues a write promise.
+// If the client's network is slow/congested, these pile up unbounded, causing:
+// - Memory growth (each promise + Uint8Array frame stays alive until resolved)
+// - QUIC stack CPU spike (processing the massive write queue)
+// - Event loop starvation (same pattern as the datagram freeze from commit 82520e3)
+const MAX_PENDING_WRITES_UNRELIABLE = 32;  // Expendable — skip and send fresh data next tick
+const MAX_PENDING_WRITES_RELIABLE = 64;    // Critical — if this backed up, connection is dead
+
 // Helper: yield to the macrotask queue so setInterval (game loop) can run.
 //
 // reader.read() resolves via microtasks, which means multiple reader loops
@@ -96,10 +106,10 @@ const MAX_PENDING_MESSAGES = 100;
 // data is available, reader.read() blocks naturally — no artificial delay.
 // This keeps latency minimal: messages are read immediately, then we yield.
 //
-// Backpressure: if the game loop isn't consuming messages fast enough
-// (pendingMessages piling up), yield longer to let it catch up.
-// When no backpressure, return a cached resolved promise to avoid allocation.
-const _resolvedPromise: Promise<void> = Promise.resolve();
+// IMPORTANT: We ALWAYS use setTimeout(resolve, 0) to yield to the macrotask queue.
+// A cached Promise.resolve() only yields to the microtask queue, which does NOT
+// give setInterval a chance to run. The allocation cost of setTimeout is negligible
+// compared to the risk of event loop starvation causing 100% CPU.
 function _yieldAfterRead(conn: ClientConnection): Promise<void> {
 	const pending = conn.pendingMessages.length;
 	if (pending > 4) {
@@ -110,9 +120,8 @@ function _yieldAfterRead(conn: ClientConnection): Promise<void> {
 		// Light backpressure: game loop has unprocessed messages
 		return new Promise(resolve => setTimeout(resolve, 10));
 	}
-	// No backpressure: return immediately. reader.read() already blocks
-	// naturally when no data is available, which yields to the event loop.
-	return _resolvedPromise;
+	// No backpressure: yield to macrotask queue so setInterval can fire
+	return new Promise(resolve => setTimeout(resolve, 0));
 }
 
 // Callback for socket allocation (injected from game_server.js)
@@ -269,6 +278,27 @@ async function _handleWebTransportSession(wt: WebTransport, address: string): Pr
 	try {
 		await wt.ready;
 
+		// Register wt.closed handler early — before stream acceptance.
+		// If stream acceptance times out or fails, wt.closed can reject without
+		// a catch handler, causing unhandled rejection crashes in logs.
+		// We store the sock/conn references later once they exist.
+		let earlyDeath = false;
+		let deferredSock: QSocket | null = null;
+		let deferredConn: ClientConnection | null = null;
+		wt.closed.then(() => {
+			if (deferredSock !== null && deferredConn !== null) {
+				_handleConnectionDeath(deferredSock, deferredConn);
+			} else {
+				earlyDeath = true;
+			}
+		}).catch(() => {
+			if (deferredSock !== null && deferredConn !== null) {
+				_handleConnectionDeath(deferredSock, deferredConn);
+			} else {
+				earlyDeath = true;
+			}
+		});
+
 		const clientConn: ClientConnection = {
 			id: nextConnectionId++,
 			webTransport: wt,
@@ -282,6 +312,7 @@ async function _handleWebTransportSession(wt: WebTransport, address: string): Pr
 			connected: true,
 			address: address,
 			lastMessageTime: Date.now(),
+			pendingWrites: 0,
 		};
 
 		// Accept the first bidirectional stream (reliable channel)
@@ -327,13 +358,17 @@ async function _handleWebTransportSession(wt: WebTransport, address: string): Pr
 
 		pendingConnections.push(sock);
 
-		_startBackgroundReaders(sock, clientConn);
+		// Wire up deferred wt.closed handler (registered early, before stream acceptance)
+		deferredSock = sock;
+		deferredConn = clientConn;
 
-		wt.closed.then(() => {
+		// If the transport died during stream acceptance, handle it now
+		if (earlyDeath) {
 			_handleConnectionDeath(sock, clientConn);
-		}).catch(() => {
-			_handleConnectionDeath(sock, clientConn);
-		});
+			return;
+		}
+
+		_startBackgroundReaders(sock, clientConn);
 
 	} catch (error) {
 		Sys_Printf('Session error for %s: %s\n', address, (error as Error).message);
@@ -753,13 +788,24 @@ export function WT_QSendMessage(
 		return -1;
 	}
 
+	// Backpressure: if too many writes are in-flight, the connection is dead/zombie
+	if (conn.pendingWrites > MAX_PENDING_WRITES_RELIABLE) {
+		Sys_Printf('WT_QSendMessage: %d pending writes for %s, disconnecting\n', conn.pendingWrites, conn.address);
+		conn.connected = false;
+		return -1;
+	}
+
 	// Frame the message: [length:2][data:N]
 	const frame = new Uint8Array(2 + data.cursize);
 	frame[0] = data.cursize & 0xff;
 	frame[1] = (data.cursize >> 8) & 0xff;
 	frame.set(data.data.subarray(0, data.cursize), 2);
 
-	conn.reliableWriter.write(frame).catch((err) => {
+	conn.pendingWrites++;
+	conn.reliableWriter.write(frame).then(() => {
+		conn.pendingWrites--;
+	}).catch((err) => {
+		conn.pendingWrites--;
 		Sys_Printf('WT_QSendMessage: write FAILED: %s\n', (err as Error).message);
 		conn.connected = false;
 	});
@@ -777,13 +823,23 @@ export function WT_SendUnreliableMessage(
 	const conn = sock.driverdata;
 	if (!conn || !conn.connected || !conn.unreliableWriter) return -1;
 
+	// Backpressure: unreliable messages are expendable — skip if writes are backed up.
+	// Next tick will send fresh data anyway.
+	if (conn.pendingWrites > MAX_PENDING_WRITES_UNRELIABLE) {
+		return 1; // Pretend success — caller doesn't need to know we dropped it
+	}
+
 	// Frame the message: [length:2][data:N]
 	const frame = new Uint8Array(2 + data.cursize);
 	frame[0] = data.cursize & 0xff;
 	frame[1] = (data.cursize >> 8) & 0xff;
 	frame.set(data.data.subarray(0, data.cursize), 2);
 
-	conn.unreliableWriter.write(frame).catch(() => {
+	conn.pendingWrites++;
+	conn.unreliableWriter.write(frame).then(() => {
+		conn.pendingWrites--;
+	}).catch(() => {
+		conn.pendingWrites--;
 		// Unreliable — silently fail
 	});
 
@@ -862,6 +918,30 @@ export function WT_SetConfig(config: {
  */
 export function WT_SetDriverLevel(level: number): void {
 	net_driverlevel = level;
+}
+
+/**
+ * Get the maximum pendingWrites count across all active connections.
+ * Used for heartbeat diagnostics to detect write backpressure building up.
+ */
+export function WT_GetMaxPendingWrites(): number {
+	let max = 0;
+	let sock = activeSockets;
+	while (sock) {
+		const conn = sock.driverdata;
+		if (conn !== null && conn.pendingWrites > max) {
+			max = conn.pendingWrites;
+		}
+		sock = sock.next;
+	}
+	// Also check pending connections
+	for (let i = 0; i < pendingConnections.length; i++) {
+		const conn = pendingConnections[i].driverdata;
+		if (conn !== null && conn.pendingWrites > max) {
+			max = conn.pendingWrites;
+		}
+	}
+	return max;
 }
 
 /**
