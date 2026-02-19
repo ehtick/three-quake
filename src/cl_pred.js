@@ -37,6 +37,7 @@ class predicted_player_t {
 		this.effects = 0;
 		this.weaponframe = 0;
 		this.msec = 0; // Time since last server frame
+		this.serverSequence = 0; // Last svc_serversequence this player was updated in
 		// Movement command for physics prediction
 		this.cmd = {
 			msec: 0,
@@ -383,9 +384,9 @@ export function CL_SetUpPlayerPrediction( dopred ) {
 	for ( let j = 0; j < MAX_CLIENTS; j++ ) {
 		const pplayer = predicted_players[ j ];
 
-		// Check if player was updated recently (within 2 seconds)
-		// This replaces the C code's state->messagenum != cl.parsecount check
-		if ( pplayer.msgtime <= 0 || ( realtime - pplayer.msgtime ) > 2.0 ) {
+		// QuakeWorld behavior: only consider players updated in the current
+		// server frame. This avoids stale players lingering as active.
+		if ( pplayer.serverSequence !== server_sequence ) {
 
 			pplayer.active = false;
 			continue;
@@ -592,7 +593,8 @@ export function CL_SetPlayerInfo( playernum, origin, velocity, frame, flags, ski
 
 	const pplayer = predicted_players[ playernum ];
 	pplayer.active = true;
-	pplayer.msgtime = realtime;
+	pplayer.msgtime = realtime - msec * 0.001;
+	pplayer.serverSequence = server_sequence;
 
 	VectorCopy( origin, pplayer.origin );
 	VectorCopy( velocity, pplayer.velocity );
