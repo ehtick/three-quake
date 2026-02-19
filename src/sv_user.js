@@ -585,6 +585,9 @@ export function SV_ReadClientMessage() {
 
 		MSG_BeginReading();
 
+		// Mark message time so PF_MSEC reflects how old this client's move is.
+		host_client.localtime = sv.time;
+
 		// Reset delta_sequence — no delta unless client requests it
 		host_client.delta_sequence = - 1;
 

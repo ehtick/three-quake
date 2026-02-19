@@ -125,6 +125,7 @@ export class client_t {
 
 		this.ping_times = new Float32Array( NUM_PING_TIMES );
 		this.num_pings = 0; // ping_times[num_pings%NUM_PING_TIMES]
+		this.localtime = 0; // server time of last message (for PF_MSEC)
 
 		// spawn parms are carried from level to level
 		this.spawn_parms = new Float32Array( NUM_SPAWN_PARMS );
