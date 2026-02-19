@@ -19,18 +19,18 @@ export function WT_SetMapCallbacks(
 export function WT_SetMaxClientsCallback(_setMaxClients: (maxClients: number) => void): void {}
 
 // Connection tracking
-// Two QUIC bidirectional streams per connection:
-// Stream 1 (reliable) for signon data, stringcmds, name/frag changes
-// Stream 2 (unreliable) for entity updates, clientdata, clc_move
+// Transport protocol:
+// - Reliable bidirectional stream for signon data, stringcmds, name/frag changes
+// - Unreliable WebTransport datagrams for entity updates, clientdata, clc_move
 interface ClientConnection {
 	id: number;
 	webTransport: WebTransport;
-	bidirectionalStream: { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> } | null;
+	reliableStream: { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> } | null;
 	reliableWriter: WritableStreamDefaultWriter<Uint8Array> | null;
 	reliableReader: ReadableStreamDefaultReader<Uint8Array> | null;
-	unreliableStream: { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> } | null;
-	unreliableWriter: WritableStreamDefaultWriter<Uint8Array> | null;
-	unreliableReader: ReadableStreamDefaultReader<Uint8Array> | null;
+	datagramWriter: WritableStreamDefaultWriter<Uint8Array> | null;
+	datagramReader: ReadableStreamDefaultReader<Uint8Array> | null;
+	maxDatagramSize: number;
 	pendingMessages: Array<{ reliable: boolean; data: Uint8Array }>;
 	connected: boolean;
 	address: string;
@@ -282,12 +282,12 @@ async function _handleWebTransportSession(wt: WebTransport, address: string): Pr
 		const clientConn: ClientConnection = {
 			id: nextConnectionId++,
 			webTransport: wt,
-			bidirectionalStream: null,
+			reliableStream: null,
 			reliableWriter: null,
 			reliableReader: null,
-			unreliableStream: null,
-			unreliableWriter: null,
-			unreliableReader: null,
+			datagramWriter: null,
+			datagramReader: null,
+			maxDatagramSize: 0,
 			pendingMessages: [],
 			connected: true,
 			address: address,
@@ -305,22 +305,25 @@ async function _handleWebTransportSession(wt: WebTransport, address: string): Pr
 			wt.close();
 			return;
 		}
-		clientConn.bidirectionalStream = stream;
+		clientConn.reliableStream = stream;
 		clientConn.reliableWriter = stream.writable.getWriter();
 		clientConn.reliableReader = stream.readable.getReader();
 
-		// Accept the second bidirectional stream (unreliable channel)
-		const { value: stream2, done: done2 } = await streamReader.read();
 		streamReader.releaseLock();
 
-		if (done2 || !stream2) {
-			Sys_Printf('Client %s did not open unreliable stream, closing\n', address);
+		// Unreliable channel via WebTransport datagrams
+		const datagrams = wt.datagrams;
+		if (!datagrams) {
+			Sys_Printf('Client %s has no datagram support, closing\n', address);
 			wt.close();
 			return;
 		}
-		clientConn.unreliableStream = stream2;
-		clientConn.unreliableWriter = stream2.writable.getWriter();
-		clientConn.unreliableReader = stream2.readable.getReader();
+		clientConn.datagramWriter = datagrams.writable.getWriter();
+		clientConn.datagramReader = datagrams.readable.getReader();
+		const maxDatagramSize = datagrams.maxDatagramSize;
+		if (typeof maxDatagramSize === 'number') {
+			clientConn.maxDatagramSize = maxDatagramSize;
+		}
 
 		// Create a socket for this game connection
 		// Note: With multi-process architecture, lobby protocol is handled by lobby_server.js
@@ -358,7 +361,7 @@ async function _handleWebTransportSession(wt: WebTransport, address: string): Pr
 }
 
 /**
- * Start background readers for reliable and unreliable streams.
+ * Start background readers for reliable stream + unreliable datagrams.
  */
 function _startBackgroundReaders(
 	sock: QSocket,
@@ -396,14 +399,15 @@ function _startBackgroundReaders(
 		} catch { /* ignore */ }
 	})();
 
-	// Read unreliable messages from the second bidirectional stream
+	// Read unreliable messages from datagrams
 	(async () => {
 		try {
-			while (conn.connected && conn.unreliableReader) {
-				const data = await _readFramedMessage(conn.unreliableReader);
-				if (data === null) break;
+			while (conn.connected && conn.datagramReader) {
+				const { value, done } = await conn.datagramReader.read();
+				if (done) break;
+				if (value === undefined || value.length === 0) continue;
 
-				conn.pendingMessages.push({ reliable: false, data });
+				conn.pendingMessages.push({ reliable: false, data: new Uint8Array(value) });
 				conn.lastMessageTime = Date.now();
 
 				// If messages are piling up, the game loop isn't consuming them
@@ -418,13 +422,13 @@ function _startBackgroundReaders(
 			}
 		} catch (error) {
 			if (conn.connected) {
-				Sys_Printf('Unreliable reader error for %s: %s\n', conn.address, String(error));
+				Sys_Printf('Datagram reader error for %s: %s\n', conn.address, String(error));
 				conn.connected = false;
 			}
 		}
 		// Release the reader lock when done
 		try {
-			conn.unreliableReader?.releaseLock();
+			conn.datagramReader?.releaseLock();
 		} catch { /* ignore */ }
 	})();
 }
@@ -597,8 +601,8 @@ function _handleConnectionDeath(sock: QSocket, conn: ClientConnection): void {
 		if (conn.reliableReader) {
 			conn.reliableReader.cancel().catch(() => {});
 		}
-		if (conn.unreliableReader) {
-			conn.unreliableReader.cancel().catch(() => {});
+		if (conn.datagramReader) {
+			conn.datagramReader.cancel().catch(() => {});
 		}
 	} catch { /* ignore */ }
 
@@ -759,14 +763,14 @@ export function WT_QSendMessage(
 }
 
 /**
- * Send an unreliable message over the second bidirectional stream (unreliable channel).
+ * Send an unreliable message over WebTransport datagrams.
  */
 export function WT_SendUnreliableMessage(
 	sock: QSocket,
 	data: { data: Uint8Array; cursize: number }
 ): number {
 	const conn = sock.driverdata;
-	if (!conn || !conn.connected || !conn.unreliableWriter) return -1;
+	if (!conn || !conn.connected || !conn.datagramWriter) return -1;
 
 	// Backpressure: unreliable messages are expendable — skip if writes are backed up.
 	// Next tick will send fresh data anyway.
@@ -774,14 +778,15 @@ export function WT_SendUnreliableMessage(
 		return 1; // Pretend success — caller doesn't need to know we dropped it
 	}
 
-	// Frame the message: [length:2][data:N]
-	const frame = new Uint8Array(2 + data.cursize);
-	frame[0] = data.cursize & 0xff;
-	frame[1] = (data.cursize >> 8) & 0xff;
-	frame.set(data.data.subarray(0, data.cursize), 2);
+	if (conn.maxDatagramSize > 0 && data.cursize > conn.maxDatagramSize) {
+		return 1;
+	}
+
+	const packet = new Uint8Array(data.cursize);
+	packet.set(data.data.subarray(0, data.cursize), 0);
 
 	conn.pendingUnreliableWrites++;
-	conn.unreliableWriter.write(frame).then(() => {
+	conn.datagramWriter.write(packet).then(() => {
 		conn.pendingUnreliableWrites--;
 	}).catch(() => {
 		conn.pendingUnreliableWrites--;
@@ -809,7 +814,7 @@ export function WT_CanSendUnreliableMessage(sock: QSocket): boolean {
 	const conn = sock.driverdata;
 	return conn !== null
 		&& conn.connected
-		&& conn.unreliableWriter !== null
+		&& conn.datagramWriter !== null
 		&& conn.pendingUnreliableWrites < MAX_PENDING_WRITES_UNRELIABLE;
 }
 
@@ -828,9 +833,9 @@ export function WT_Close(sock: QSocket): void {
 			conn.reliableReader.cancel().catch(() => {});
 			conn.reliableReader = null;
 		}
-		if (conn.unreliableReader) {
-			conn.unreliableReader.cancel().catch(() => {});
-			conn.unreliableReader = null;
+		if (conn.datagramReader) {
+			conn.datagramReader.cancel().catch(() => {});
+			conn.datagramReader = null;
 		}
 
 		// Close writers
@@ -838,9 +843,9 @@ export function WT_Close(sock: QSocket): void {
 			conn.reliableWriter.close().catch(() => {});
 			conn.reliableWriter = null;
 		}
-		if (conn.unreliableWriter) {
-			conn.unreliableWriter.close().catch(() => {});
-			conn.unreliableWriter = null;
+		if (conn.datagramWriter) {
+			conn.datagramWriter.releaseLock();
+			conn.datagramWriter = null;
 		}
 		conn.webTransport.close();
 	} catch {

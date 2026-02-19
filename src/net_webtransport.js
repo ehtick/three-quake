@@ -33,15 +33,15 @@ class WebTransportConnection {
 
 		this.transport = transport;
 
-		// TWO-STREAM PROTOCOL:
-		// Stream 1 (reliable): signon messages, stringcmds
-		// Stream 2 (unreliable): entity updates, movement
+		// Transport protocol:
+		// - Reliable bidirectional stream: signon messages, stringcmds
+		// - Unreliable datagrams: entity updates, movement
 		this.reliableStream = null;
 		this.reliableWriter = null;
 		this.reliableReader = null;
-		this.unreliableStream = null;
-		this.unreliableWriter = null;
-		this.unreliableReader = null;
+		this.datagramWriter = null;
+		this.datagramReader = null;
+		this.maxDatagramSize = 0;
 
 		this.pendingMessages = []; // { reliable: boolean, data: Uint8Array }
 		this.connected = false;
@@ -669,7 +669,7 @@ export async function WT_Connect( host ) {
 			}
 
 			// Server responded but didn't redirect - use same-port direct connection
-			// Close lobby connection and reconnect with two-stream protocol
+			// Close lobby connection and reconnect with game transport protocol
 			Con_Printf( 'Room on same port, reconnecting...\n' );
 			transport.close();
 			NET_FreeQSocket( sock );
@@ -677,7 +677,7 @@ export async function WT_Connect( host ) {
 
 		}
 
-		// No room ID - connect directly using two-stream protocol
+		// No room ID - connect directly using game transport protocol
 		// (This path is for direct server connections without lobby)
 		Con_Printf( 'No room ID, using direct connection\n' );
 		transport.close();
@@ -713,10 +713,9 @@ _WT_ConnectDirect
 Connect directly to a room server (no lobby protocol)
 Used when redirected from lobby to a room server on a different port
 
-TWO-STREAM PROTOCOL:
-- Stream 1 (reliable): signon messages, stringcmds
-- Stream 2 (unreliable): entity updates, movement
-Frame format: [length:2][data...]
+Transport protocol:
+- Reliable stream: [length:2][data...]
+- Unreliable datagrams: raw quake payload per datagram
 =============
 */
 async function _WT_ConnectDirect( url, originalHost, roomId = null ) {
@@ -750,21 +749,27 @@ async function _WT_ConnectDirect( url, originalHost, roomId = null ) {
 		const conn = new WebTransportConnection( transport );
 		conn.connected = true;
 
-		// TWO-STREAM PROTOCOL:
-		// Stream 1 (reliable): signon messages, stringcmds
-		// Stream 2 (unreliable): entity updates, movement
-
-		// Create first bidirectional stream (reliable channel)
+		// Reliable stream: signon messages, stringcmds
 		conn.reliableStream = await transport.createBidirectionalStream();
 		conn.reliableWriter = conn.reliableStream.writable.getWriter();
 		conn.reliableReader = conn.reliableStream.readable.getReader();
 		Con_Printf( 'Reliable stream ready\n' );
 
-		// Create second bidirectional stream (unreliable channel)
-		conn.unreliableStream = await transport.createBidirectionalStream();
-		conn.unreliableWriter = conn.unreliableStream.writable.getWriter();
-		conn.unreliableReader = conn.unreliableStream.readable.getReader();
-		Con_Printf( 'Unreliable stream ready\n' );
+		// Unreliable channel: WebTransport datagrams
+		if ( transport.datagrams == null ) {
+
+			throw new Error( 'WebTransport datagrams unavailable' );
+
+		}
+		conn.datagramWriter = transport.datagrams.writable.getWriter();
+		conn.datagramReader = transport.datagrams.readable.getReader();
+		const maxDatagramSize = transport.datagrams.maxDatagramSize;
+		if ( typeof maxDatagramSize === 'number' ) {
+
+			conn.maxDatagramSize = maxDatagramSize;
+
+		}
+		Con_Printf( 'Datagram channel ready\n' );
 
 		// Store connection
 		sock.driverdata = conn;
@@ -828,16 +833,12 @@ async function _WT_ConnectDirect( url, originalHost, roomId = null ) {
 =============
 _WT_StartBackgroundReaders
 
-Start background readers for both streams
-
-TWO-STREAM PROTOCOL:
-- Stream 1 (reliable): signon messages, stringcmds - frame format: [length:2][data...]
-- Stream 2 (unreliable): entity updates, movement - frame format: [length:2][data...]
+Start background readers for reliable stream + unreliable datagrams
 =============
 */
 function _WT_StartBackgroundReaders( sock, conn ) {
 
-	Con_Printf( 'Starting stream readers...\n' );
+	Con_Printf( 'Starting reliable stream and datagram readers...\n' );
 
 	// Reliable stream reader
 	( async () => {
@@ -884,36 +885,18 @@ function _WT_StartBackgroundReaders( sock, conn ) {
 
 	} )();
 
-	// Unreliable stream reader
+	// Unreliable datagram reader
 	( async () => {
-
-		let buffer = new Uint8Array( 0 );
 
 		try {
 
-			while ( conn.connected && conn.unreliableReader ) {
+			while ( conn.connected && conn.datagramReader ) {
 
-				const { value, done } = await conn.unreliableReader.read();
-				if ( done || value === undefined || value.length === 0 ) break;
+				const { value, done } = await conn.datagramReader.read();
+				if ( done ) break;
+				if ( value === undefined || value.length === 0 ) continue;
 
-				// Append to buffer
-				const newBuffer = new Uint8Array( buffer.length + value.length );
-				newBuffer.set( buffer );
-				newBuffer.set( value, buffer.length );
-				buffer = newBuffer;
-
-				// Process complete frames: [length:2][data...]
-				while ( buffer.length >= 2 ) {
-
-					const length = buffer[ 0 ] | ( buffer[ 1 ] << 8 );
-					if ( buffer.length < 2 + length ) break;
-
-					const data = buffer.subarray( 2, 2 + length );
-					buffer = buffer.subarray( 2 + length );
-
-					conn.pendingMessages.push( { reliable: false, data: new Uint8Array( data ) } );
-
-				}
+				conn.pendingMessages.push( { reliable: false, data: new Uint8Array( value ) } );
 
 			}
 
@@ -921,7 +904,7 @@ function _WT_StartBackgroundReaders( sock, conn ) {
 
 			if ( conn.connected ) {
 
-				Con_DPrintf( 'Unreliable reader error: ' + error.message + '\n' );
+				Con_DPrintf( 'Datagram reader error: ' + error.message + '\n' );
 
 			}
 
@@ -1184,8 +1167,7 @@ export function WT_QSendMessage( sock, data ) {
 =============
 WT_SendUnreliableMessage
 
-Send an unreliable message via the unreliable stream.
-Frame format: [length:2][data...]
+Send an unreliable message via WebTransport datagrams.
 =============
 */
 export function WT_SendUnreliableMessage( sock, data ) {
@@ -1206,21 +1188,25 @@ export function WT_SendUnreliableMessage( sock, data ) {
 
 	}
 
-	if ( conn.unreliableWriter == null ) {
+	if ( conn.datagramWriter == null ) {
 
-		Con_DPrintf( 'WT_SendUnreliableMessage: no unreliableWriter\n' );
+		Con_DPrintf( 'WT_SendUnreliableMessage: no datagramWriter\n' );
 		return - 1;
 
 	}
 
-	// Frame the message: [length:2][data...]
-	const frame = new Uint8Array( 2 + data.cursize );
-	frame[ 0 ] = data.cursize & 0xff;
-	frame[ 1 ] = ( data.cursize >> 8 ) & 0xff;
-	frame.set( data.data.subarray( 0, data.cursize ), 2 );
+	if ( conn.maxDatagramSize > 0 && data.cursize > conn.maxDatagramSize ) {
 
-	// Send via unreliable stream
-	conn.unreliableWriter.write( frame ).catch( () => {
+		// Datagram too large for current path MTU — drop unreliable payload.
+		return 1;
+
+	}
+
+	const packet = new Uint8Array( data.cursize );
+	packet.set( data.data.subarray( 0, data.cursize ), 0 );
+
+	// Send via unreliable datagrams
+	conn.datagramWriter.write( packet ).catch( () => {
 
 		// Unreliable — silently fail
 
@@ -1242,7 +1228,7 @@ export function WT_CanSendMessage( sock ) {
 	const conn = sock.driverdata;
 	if ( ! conn ) return false;
 
-	return conn.connected;
+	return conn.connected && conn.reliableWriter != null;
 
 }
 
@@ -1258,7 +1244,7 @@ export function WT_CanSendUnreliableMessage( sock ) {
 	const conn = sock.driverdata;
 	if ( ! conn ) return false;
 
-	return conn.connected;
+	return conn.connected && conn.datagramWriter != null;
 
 }
 
@@ -1286,10 +1272,10 @@ export function WT_Close( sock ) {
 
 		}
 
-		if ( conn.unreliableReader ) {
+		if ( conn.datagramReader ) {
 
-			conn.unreliableReader.cancel().catch( () => {} );
-			conn.unreliableReader = null;
+			conn.datagramReader.cancel().catch( () => {} );
+			conn.datagramReader = null;
 
 		}
 
@@ -1301,10 +1287,10 @@ export function WT_Close( sock ) {
 
 		}
 
-		if ( conn.unreliableWriter ) {
+		if ( conn.datagramWriter ) {
 
-			conn.unreliableWriter.close().catch( () => {} );
-			conn.unreliableWriter = null;
+			conn.datagramWriter.releaseLock();
+			conn.datagramWriter = null;
 
 		}
 
