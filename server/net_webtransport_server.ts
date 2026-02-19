@@ -24,6 +24,8 @@ export function WT_SetMaxClientsCallback(
 // Transport protocol:
 // - Reliable bidirectional stream for signon data, stringcmds, name/frag changes
 // - Unreliable WebTransport datagrams for entity updates, clientdata, clc_move
+// - Game payloads may be prefixed with transport sequencing header:
+//   [magic:1][sequence:4][ack:4][quake_payload...]
 interface ClientConnection {
   id: number;
   webTransport: WebTransport;
@@ -106,6 +108,8 @@ const MAX_PENDING_MESSAGES = 100;
 //   one queued "latest" datagram per connection.
 const MAX_PENDING_WRITES_UNRELIABLE = 2;
 const MAX_PENDING_WRITES_RELIABLE = 64;
+const WT_PACKET_MAGIC = 0x71;
+const WT_PACKET_HEADER_BYTES = 9; // [magic:u8][sequence:u32][acknowledged:u32]
 
 const USE_OUTBOUND_DATAGRAMS: boolean = true;
 
@@ -126,6 +130,62 @@ function _yieldAfterRead(): Promise<void> {
 function _isTimeoutLikeError(error: unknown): boolean {
   const msg = String(error).toLowerCase();
   return msg.includes("timed out") || msg.includes("timeout");
+}
+
+function _isNewerSequence(sequence: number, current: number): boolean {
+  return (((sequence - current) | 0) > 0);
+}
+
+function _buildSequencedPacket(
+  sock: QSocket,
+  data: Uint8Array,
+  dataLength: number,
+  forceHeader = false,
+): Uint8Array {
+  if (!forceHeader && (sock.receiveSequence | 0) < 0) {
+    const legacyPacket = new Uint8Array(dataLength);
+    legacyPacket.set(data.subarray(0, dataLength), 0);
+    return legacyPacket;
+  }
+
+  const packet = new Uint8Array(WT_PACKET_HEADER_BYTES + dataLength);
+  const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+
+  const sequence = sock.sendSequence | 0;
+  const acknowledged = sock.receiveSequence | 0;
+
+  packet[0] = WT_PACKET_MAGIC;
+  view.setUint32(1, sequence >>> 0, true);
+  view.setUint32(5, acknowledged >>> 0, true);
+  packet.set(data.subarray(0, dataLength), WT_PACKET_HEADER_BYTES);
+
+  sock.sendSequence = (sequence + 1) | 0;
+
+  return packet;
+}
+
+function _parseSequencedPacket(
+  sock: QSocket,
+  packet: Uint8Array,
+): Uint8Array | null {
+  if (packet.length < WT_PACKET_HEADER_BYTES || packet[0] !== WT_PACKET_MAGIC) {
+    return packet;
+  }
+
+  const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+  const sequence = view.getUint32(1, true) | 0;
+  const acknowledged = view.getUint32(5, true) | 0;
+
+  if (_isNewerSequence(acknowledged, sock.ackSequence | 0)) {
+    sock.ackSequence = acknowledged;
+  }
+
+  if (_isNewerSequence(sequence, sock.receiveSequence | 0) === false) {
+    return null;
+  }
+
+  sock.receiveSequence = sequence;
+  return packet.subarray(WT_PACKET_HEADER_BYTES);
 }
 
 function _disableOutboundDatagrams(
@@ -399,6 +459,9 @@ async function _handleWebTransportSession(
     sock.driverdata = clientConn;
     sock.connecttime = performance.now() / 1000;
     sock.lastMessageTime = performance.now() / 1000;
+    sock.sendSequence = 0;
+    sock.receiveSequence = -1;
+    sock.ackSequence = -1;
 
     pendingConnections.push(sock);
 
@@ -815,37 +878,46 @@ export function WT_QGetMessage(sock: QSocket): number {
     return -1;
   }
 
-  if (conn.pendingMessages.length === 0) {
+  while (conn.pendingMessages.length > 0) {
+    // Get next message
+    let msg = conn.pendingMessages.shift()!;
+
+    // For unreliable messages, skip to the most recent one.
+    // In original Quake, unreliable messages are overwritten by newer ones.
+    // The WebTransport datagram reader queues all datagrams, so if the client
+    // sends faster than the server reads, stale messages pile up.
+    // Discard stale unreliable messages but preserve any reliable messages.
+    if (!msg.reliable) {
+      while (conn.pendingMessages.length > 0) {
+        const next = conn.pendingMessages[0];
+        if (next.reliable) break; // Stop at next reliable message
+        conn.pendingMessages.shift();
+        msg = next; // Use newer unreliable message
+      }
+    }
+
+    const payload = _parseSequencedPacket(sock, msg.data);
+    if (payload === null) {
+      continue;
+    }
+
+    // Copy to net_message
+    net_message.cursize = 0;
+    for (let i = 0; i < payload.length && i < net_message.maxsize; i++) {
+      net_message.data[i] = payload[i];
+      net_message.cursize++;
+    }
+
+    sock.lastMessageTime = performance.now() / 1000;
+
+    return msg.reliable ? 1 : 2;
+  }
+
+  if (conn.connected) {
     return 0;
   }
 
-  // Get next message
-  let msg = conn.pendingMessages.shift()!;
-
-  // For unreliable messages, skip to the most recent one.
-  // In original Quake, unreliable messages are overwritten by newer ones.
-  // The WebTransport datagram reader queues all datagrams, so if the client
-  // sends faster than the server reads, stale messages pile up.
-  // Discard stale unreliable messages but preserve any reliable messages.
-  if (!msg.reliable) {
-    while (conn.pendingMessages.length > 0) {
-      const next = conn.pendingMessages[0];
-      if (next.reliable) break; // Stop at next reliable message
-      conn.pendingMessages.shift();
-      msg = next; // Use newer unreliable message
-    }
-  }
-
-  // Copy to net_message
-  net_message.cursize = 0;
-  for (let i = 0; i < msg.data.length && i < net_message.maxsize; i++) {
-    net_message.data[i] = msg.data[i];
-    net_message.cursize++;
-  }
-
-  sock.lastMessageTime = performance.now() / 1000;
-
-  return msg.reliable ? 1 : 2;
+  return -1;
 }
 
 function _updatePendingWriteCounts(conn: ClientConnection): void {
@@ -1039,11 +1111,13 @@ export function WT_QSendMessage(
     return -1;
   }
 
+  const packet = _buildSequencedPacket(sock, data.data, data.cursize);
+
   // Frame the message: [length:2][data:N]
-  const frame = new Uint8Array(2 + data.cursize);
-  frame[0] = data.cursize & 0xff;
-  frame[1] = (data.cursize >> 8) & 0xff;
-  frame.set(data.data.subarray(0, data.cursize), 2);
+  const frame = new Uint8Array(2 + packet.length);
+  frame[0] = packet.length & 0xff;
+  frame[1] = (packet.length >> 8) & 0xff;
+  frame.set(packet, 2);
 
   conn.reliableWriteQueue.push(frame);
   _updatePendingWriteCounts(conn);
@@ -1070,12 +1144,11 @@ export function WT_SendUnreliableMessage(
     return WT_QSendMessage(sock, data);
   }
 
-  if (conn.maxDatagramSize > 0 && data.cursize > conn.maxDatagramSize) {
+  const packet = _buildSequencedPacket(sock, data.data, data.cursize);
+
+  if (conn.maxDatagramSize > 0 && packet.length > conn.maxDatagramSize) {
     return 1;
   }
-
-  const packet = new Uint8Array(data.cursize);
-  packet.set(data.data.subarray(0, data.cursize), 0);
 
   // Only keep the latest unreliable packet while one write is in flight.
   conn.unreliableQueuedPacket = packet;

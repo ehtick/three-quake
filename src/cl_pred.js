@@ -96,6 +96,8 @@ export class frame_t {
 			upmove: 0,
 			buttons: 0
 		};
+		this.sequence = - 1; // Absolute client command sequence stored in this slot
+		this.netsequence = - 1; // Transport-level packet sequence used to send this command
 		this.senttime = 0; // Time command was sent
 		this.playerstate = new player_state_t();
 	}
@@ -229,8 +231,78 @@ Called when server acknowledges a command
 =================
 */
 export function CL_AcknowledgeCommand( sequence ) {
-	if ( sequence > incoming_sequence )
-		incoming_sequence = sequence;
+	const newestSent = outgoing_sequence - 1;
+	if ( newestSent < 0 )
+		return;
+
+	if ( sequence > newestSent )
+		sequence = newestSent;
+
+	if ( sequence <= incoming_sequence )
+		return;
+
+	const frame = frames[ sequence & UPDATE_MASK ];
+	if ( frame.sequence !== sequence )
+		return;
+
+	incoming_sequence = sequence;
+
+	if ( frame.senttime > 0 ) {
+
+		const observedRTT = realtime - frame.senttime;
+		if ( observedRTT >= 0 && observedRTT < 2.0 ) {
+
+			if ( cls_latency <= 0 ) {
+
+				cls_latency = observedRTT;
+
+			} else {
+
+				cls_latency = cls_latency * 0.75 + observedRTT * 0.25;
+
+			}
+
+		}
+
+	}
+}
+
+function _CL_SequenceGTE( sequence, baseline ) {
+
+	return ( ( sequence - baseline ) | 0 ) >= 0;
+
+}
+
+/*
+=================
+CL_AcknowledgeTransportSequence
+
+Map a transport-level packet ack to the newest predicted command sent
+in a packet with sequence <= transport ack.
+=================
+*/
+export function CL_AcknowledgeTransportSequence( transportAckSequence ) {
+
+	const newestSent = outgoing_sequence - 1;
+	if ( newestSent < 0 )
+		return;
+
+	const searchEnd = Math.max( incoming_sequence + 1, outgoing_sequence - UPDATE_BACKUP + 1 );
+	for ( let seq = newestSent; seq >= searchEnd; seq -- ) {
+
+		const frame = frames[ seq & UPDATE_MASK ];
+		if ( frame.sequence !== seq || frame.netsequence < 0 )
+			continue;
+
+		if ( _CL_SequenceGTE( transportAckSequence, frame.netsequence ) ) {
+
+			CL_AcknowledgeCommand( seq );
+			return;
+
+		}
+
+	}
+
 }
 
 /*
@@ -266,7 +338,7 @@ export function CL_FindAcknowledgedSequence( currentTime ) {
 	for ( let seq = searchStart; seq >= searchEnd; seq -- ) {
 
 		const frame = frames[ seq & UPDATE_MASK ];
-		if ( frame.senttime > 0 && frame.senttime <= ackCutoffTime ) {
+		if ( frame.sequence === seq && frame.senttime > 0 && frame.senttime <= ackCutoffTime ) {
 
 			bestSeq = seq;
 			break;
@@ -283,7 +355,7 @@ export function CL_FindAcknowledgedSequence( currentTime ) {
 		if ( nextSeq <= newestSent ) {
 
 			const nextFrame = frames[ nextSeq & UPDATE_MASK ];
-			if ( nextFrame.senttime > 0 && nextFrame.senttime <= currentTime )
+			if ( nextFrame.sequence === nextSeq && nextFrame.senttime > 0 && nextFrame.senttime <= currentTime )
 				bestSeq = nextSeq;
 
 		}
@@ -294,7 +366,7 @@ export function CL_FindAcknowledgedSequence( currentTime ) {
 		return - 1;
 
 	const ackFrame = frames[ bestSeq & UPDATE_MASK ];
-	if ( ackFrame.senttime > 0 ) {
+	if ( ackFrame.sequence === bestSeq && ackFrame.senttime > 0 ) {
 
 		const observedRTT = currentTime - ackFrame.senttime;
 		if ( observedRTT >= 0 && observedRTT < 2.0 ) {
@@ -325,7 +397,8 @@ CL_StoreCommand
 Store a command for prediction replay
 =================
 */
-export function CL_StoreCommand( cmd, senttime ) {
+export function CL_StoreCommand( cmd, senttime, netsequence = - 1 ) {
+	const sequence = outgoing_sequence;
 	const framenum = outgoing_sequence & UPDATE_MASK;
 	const frame = frames[ framenum ];
 
@@ -336,11 +409,13 @@ export function CL_StoreCommand( cmd, senttime ) {
 	frame.cmd.sidemove = cmd.sidemove;
 	frame.cmd.upmove = cmd.upmove;
 	frame.cmd.buttons = cmd.buttons;
+	frame.sequence = sequence;
+	frame.netsequence = netsequence;
 	frame.senttime = senttime;
 
 	outgoing_sequence++;
 
-	return framenum;
+	return sequence;
 }
 
 // Temporary player state for other-player prediction
@@ -905,6 +980,8 @@ export function CL_ResetPrediction() {
 	cl_prediction_active = false;
 
 	for ( let i = 0; i < UPDATE_BACKUP; i++ ) {
+		frames[ i ].sequence = - 1;
+		frames[ i ].netsequence = - 1;
 		frames[ i ].senttime = 0;
 		frames[ i ].playerstate.origin.fill( 0 );
 		frames[ i ].playerstate.velocity.fill( 0 );

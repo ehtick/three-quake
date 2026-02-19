@@ -25,6 +25,8 @@ const ROOM_JOIN_TIMEOUT_MS = 10000; // 10 seconds
 // traffic on the reliable stream for stability, while still receiving server
 // datagrams for entity updates.
 const USE_CLIENT_OUTBOUND_DATAGRAMS = false;
+const WT_PACKET_MAGIC = 0x71;
+const WT_PACKET_HEADER_BYTES = 9; // [magic:u8][sequence:u32][acknowledged:u32]
 
 // Active connections
 const wt_connections = new Map(); // qsocket_t -> WebTransportConnection
@@ -54,6 +56,59 @@ class WebTransportConnection {
 		this.error = null;
 
 	}
+
+}
+
+function _isNewerSequence( sequence, current ) {
+
+	return ( ( sequence - current ) | 0 ) > 0;
+
+}
+
+function _WT_BuildSequencedPacket( sock, data, dataLength, forceHeader = false ) {
+
+	if ( forceHeader !== true && ( sock.receiveSequence | 0 ) < 0 ) {
+
+		const legacyPacket = new Uint8Array( dataLength );
+		legacyPacket.set( data.subarray( 0, dataLength ), 0 );
+		return legacyPacket;
+
+	}
+
+	const packet = new Uint8Array( WT_PACKET_HEADER_BYTES + dataLength );
+	const view = new DataView( packet.buffer, packet.byteOffset, packet.byteLength );
+
+	const sequence = sock.sendSequence | 0;
+	const acknowledged = sock.receiveSequence | 0;
+
+	packet[ 0 ] = WT_PACKET_MAGIC;
+	view.setUint32( 1, sequence >>> 0, true );
+	view.setUint32( 5, acknowledged >>> 0, true );
+	packet.set( data.subarray( 0, dataLength ), WT_PACKET_HEADER_BYTES );
+
+	sock.sendSequence = ( sequence + 1 ) | 0;
+
+	return packet;
+
+}
+
+function _WT_ParseSequencedPacket( sock, packet ) {
+
+	if ( packet.length < WT_PACKET_HEADER_BYTES || packet[ 0 ] !== WT_PACKET_MAGIC )
+		return packet;
+
+	const view = new DataView( packet.buffer, packet.byteOffset, packet.byteLength );
+	const sequence = view.getUint32( 1, true ) | 0;
+	const acknowledged = view.getUint32( 5, true ) | 0;
+
+	if ( _isNewerSequence( acknowledged, sock.ackSequence | 0 ) )
+		sock.ackSequence = acknowledged;
+
+	if ( _isNewerSequence( sequence, sock.receiveSequence | 0 ) === false )
+		return null;
+
+	sock.receiveSequence = sequence;
+	return packet.subarray( WT_PACKET_HEADER_BYTES );
 
 }
 
@@ -723,8 +778,9 @@ Connect directly to a room server (no lobby protocol)
 Used when redirected from lobby to a room server on a different port
 
 Transport protocol:
-- Reliable stream: [length:2][data...]
-- Unreliable datagrams: raw quake payload per datagram
+- Reliable stream: [length:2][transport_packet]
+- Unreliable datagrams: transport_packet
+  transport_packet: [magic:1][sequence:4][ack:4][quake_payload...]
 =============
 */
 async function _WT_ConnectDirect( url, originalHost, roomId = null ) {
@@ -753,6 +809,9 @@ async function _WT_ConnectDirect( url, originalHost, roomId = null ) {
 
 		sock.address = originalHost;
 		sock.driver = net_driverlevel;
+		sock.sendSequence = 0;
+		sock.receiveSequence = - 1;
+		sock.ackSequence = - 1;
 
 		// Create connection data
 		const conn = new WebTransportConnection( transport );
@@ -1087,39 +1146,46 @@ export function WT_QGetMessage( sock ) {
 
 	}
 
-	if ( conn.pendingMessages.length === 0 ) {
+	while ( conn.pendingMessages.length > 0 ) {
 
-		return 0;
+		// Get next message
+		let msg = conn.pendingMessages.shift();
 
-	}
+		// For unreliable messages, skip to the most recent one.
+		// In original Quake, unreliable messages are overwritten by newer ones.
+		// The WebTransport datagram reader queues all datagrams, so if the
+		// sender is faster than the reader, stale messages pile up.
+		if ( msg.reliable === false ) {
 
-	// Get next message
-	let msg = conn.pendingMessages.shift();
+			while ( conn.pendingMessages.length > 0 ) {
 
-	// For unreliable messages, skip to the most recent one.
-	// In original Quake, unreliable messages are overwritten by newer ones.
-	// The WebTransport datagram reader queues all datagrams, so if the
-	// sender is faster than the reader, stale messages pile up.
-	if ( msg.reliable === false ) {
+				const next = conn.pendingMessages[ 0 ];
+				if ( next.reliable ) break; // Stop at next reliable message
+				conn.pendingMessages.shift();
+				msg = next; // Use newer unreliable message
 
-		while ( conn.pendingMessages.length > 0 ) {
-
-			const next = conn.pendingMessages[ 0 ];
-			if ( next.reliable ) break; // Stop at next reliable message
-			conn.pendingMessages.shift();
-			msg = next; // Use newer unreliable message
+			}
 
 		}
 
+		const payload = _WT_ParseSequencedPacket( sock, msg.data );
+		if ( payload == null )
+			continue;
+
+		// Copy to net_message
+		SZ_Clear( net_message );
+		SZ_Write( net_message, payload, payload.length );
+
+		sock.lastMessageTime = performance.now() / 1000;
+
+		return msg.reliable ? 1 : 2;
+
 	}
 
-	// Copy to net_message
-	SZ_Clear( net_message );
-	SZ_Write( net_message, msg.data, msg.data.length );
+	if ( conn.connected )
+		return 0;
 
-	sock.lastMessageTime = performance.now() / 1000;
-
-	return msg.reliable ? 1 : 2;
+	return - 1;
 
 }
 
@@ -1154,10 +1220,11 @@ export function WT_QSendMessage( sock, data ) {
 	}
 
 	// Frame the message: [length:2][data...]
-	const frame = new Uint8Array( 2 + data.cursize );
-	frame[ 0 ] = data.cursize & 0xff;
-	frame[ 1 ] = ( data.cursize >> 8 ) & 0xff;
-	frame.set( data.data.subarray( 0, data.cursize ), 2 );
+	const packet = _WT_BuildSequencedPacket( sock, data.data, data.cursize, true );
+	const frame = new Uint8Array( 2 + packet.length );
+	frame[ 0 ] = packet.length & 0xff;
+	frame[ 1 ] = ( packet.length >> 8 ) & 0xff;
+	frame.set( packet, 2 );
 
 	// Send asynchronously - QUIC handles reliability
 	conn.reliableWriter.write( frame ).catch( ( error ) => {
@@ -1211,15 +1278,14 @@ export function WT_SendUnreliableMessage( sock, data ) {
 
 	}
 
-	if ( conn.maxDatagramSize > 0 && data.cursize > conn.maxDatagramSize ) {
+	const packet = _WT_BuildSequencedPacket( sock, data.data, data.cursize, true );
+
+	if ( conn.maxDatagramSize > 0 && packet.length > conn.maxDatagramSize ) {
 
 		// Datagram too large for current path MTU — drop unreliable payload.
 		return 1;
 
 	}
-
-	const packet = new Uint8Array( data.cursize );
-	packet.set( data.data.subarray( 0, data.cursize ), 0 );
 
 	// Send via unreliable datagrams
 	conn.datagramWriter.write( packet ).catch( () => {

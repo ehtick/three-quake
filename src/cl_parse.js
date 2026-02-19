@@ -55,8 +55,9 @@ import {
 import { VectorCopy } from './mathlib.js';
 import { V_ParseDamage } from './view.js';
 import { Mod_ForName } from './gl_model.js';
-import { CL_SetServerState, CL_AcknowledgeCommand,
-	CL_FindAcknowledgedSequence, CL_SetValidSequence, CL_SetPlayerInfo,
+import { CL_SetServerState, CL_AcknowledgeCommand, CL_AcknowledgeTransportSequence,
+	CL_FindAcknowledgedSequence,
+	CL_SetValidSequence, CL_SetPlayerInfo,
 	CL_GetServerSequence, CL_SetServerSequence, CL_GetFrame, CL_GetEntityFrame,
 	CL_GetValidSequence } from './cl_pred.js';
 import { R_TranslatePlayerSkin } from './gl_rmisc.js';
@@ -1004,12 +1005,22 @@ export function CL_ParseClientdata( bits ) {
 	//
 	if ( cl.viewentity >= 1 && cl.viewentity < cl_entities.length ) {
 
-		// First, acknowledge commands based on timing
-		// This updates incoming_sequence to point to the correct frame
-		const ackSeq = CL_FindAcknowledgedSequence( realtime );
-		if ( ackSeq >= 0 ) {
+		// QuakeWorld-style reconciliation baseline:
+		// use the latest transport-level ack from server.
+		if ( cls.netcon != null ) {
 
-			CL_AcknowledgeCommand( ackSeq );
+			const ackSeq = cls.netcon.ackSequence | 0;
+			if ( ackSeq >= 0 ) {
+
+				CL_AcknowledgeTransportSequence( ackSeq );
+
+			} else {
+
+				const fallbackAckSeq = CL_FindAcknowledgedSequence( realtime );
+				if ( fallbackAckSeq >= 0 )
+					CL_AcknowledgeCommand( fallbackAckSeq );
+
+			}
 
 		}
 

@@ -40,6 +40,9 @@ const _sendmove_predCmd = {
 	buttons: 0
 };
 
+// WebTransport game servers parse QuakeWorld-style clc_delta requests.
+const USE_QW_COMMAND_EXTENSIONS = true;
+
 /*
 ===============================================================================
 
@@ -418,20 +421,22 @@ export function CL_SendMove( cmd ) {
 	_sendmove_predCmd.upmove = cmd.upmove;
 	_sendmove_predCmd.buttons = bits;
 	VectorCopy( cl.viewangles, _sendmove_predAngles );
-	CL_StoreCommand( _sendmove_predCmd, realtime );
+	const netSequence = cls.netcon != null ? ( cls.netcon.sendSequence | 0 ) : - 1;
+	CL_StoreCommand( _sendmove_predCmd, realtime, netSequence );
 
-	//
-	// Request delta compression of entities
-	// Ported from: QW/client/cl_input.c
-	//
-	const validseq = CL_GetValidSequence();
-	const serverseq = CL_GetServerSequence();
-	let frameDiff = ( serverseq & 255 ) - ( validseq & 255 );
-	if ( frameDiff < 0 ) frameDiff += 256;
-	if ( validseq !== 0 && frameDiff < PE_UPDATE_BACKUP - 1 ) {
+	if ( USE_QW_COMMAND_EXTENSIONS === true ) {
 
-		MSG_WriteByte( buf, clc_delta );
-		MSG_WriteByte( buf, validseq & 255 );
+		// Request delta compression of entities (QW-style).
+		const validseq = CL_GetValidSequence();
+		const serverseq = CL_GetServerSequence();
+		let frameDiff = ( serverseq & 255 ) - ( validseq & 255 );
+		if ( frameDiff < 0 ) frameDiff += 256;
+		if ( validseq !== 0 && frameDiff < PE_UPDATE_BACKUP - 1 ) {
+
+			MSG_WriteByte( buf, clc_delta );
+			MSG_WriteByte( buf, validseq & 255 );
+
+		}
 
 	}
 
