@@ -2057,6 +2057,15 @@ function M_Setup_Key( key ) {
 ==============================================================================
 */
 
+const CREDITS_SOURCE_URL = 'https://github.com/mrdoob/three-quake';
+
+function M_OpenCreditsSource() {
+
+	if ( typeof window !== 'undefined' )
+		window.open( CREDITS_SOURCE_URL, '_blank' );
+
+}
+
 function M_Menu_Credits_f() {
 
 	setKeyDest( key_menu );
@@ -2082,7 +2091,9 @@ function M_Credits_Draw() {
 	M_PrintWhite( 16, 124, 'Support            Id Mom\n' );
 	M_Print( 16, 132, ' Barrett Alexander  Shawn Green\n' );
 	M_PrintWhite( 16, 148, 'JavaScript port\n' );
-	M_Print( 16, 156, ' mrdoob + claude opus\n' );
+	M_Print( 16, 156, ' mrdoob + claude + codex\n' );
+	M_PrintWhite( 16, 172, 'Source code\n' );
+	M_Print( 16, 180, ' github.com/mrdoob/three-quake\n' );
 
 }
 
@@ -2093,12 +2104,22 @@ function M_Credits_Key( key ) {
 		case K_ESCAPE:
 			M_Menu_Main_f();
 			break;
+		case K_ENTER:
+			M_OpenCreditsSource();
+			break;
 
 	}
 
 }
 
 function M_Credits_Touch( vx, vy ) {
+
+	if ( vy >= 172 ) {
+
+		M_OpenCreditsSource();
+		return;
+
+	}
 
 	M_Credits_Key( K_ESCAPE );
 
