@@ -9,6 +9,7 @@ const BASE_PORT = 4434;
 const MAX_ROOMS = 10;
 const ROOM_STARTUP_GRACE_MS = 30 * 1000;
 const ROOM_WATCHDOG_TIMEOUT_MS = 30 * 1000;
+const ROOM_JOIN_STALE_MS = 12 * 1000;
 
 interface RoomProcess {
 	id: string;
@@ -22,6 +23,15 @@ interface RoomProcess {
 	lastActiveTime: number;  // Last time room had players (for idle cleanup)
 	lastOutputTime: number;  // Last stdout/stderr line seen from room process
 	lastWatchdogTime: number; // Last watchdog tick seen from room stderr
+}
+
+function isRoomResponsive( room: RoomProcess, now: number ): boolean {
+	// Give freshly-created rooms time to boot before enforcing watchdog freshness.
+	if ( now - room.createdAt < ROOM_STARTUP_GRACE_MS ) {
+		return true;
+	}
+
+	return ( now - room.lastWatchdogTime ) <= ROOM_JOIN_STALE_MS;
 }
 
 // Active room processes
@@ -335,6 +345,7 @@ export function RoomManager_GetRoom( id: string ): {
 
 	const room = roomProcesses.get( id.toUpperCase() );
 	if ( room == null ) return null;
+	if ( isRoomResponsive( room, Date.now() ) === false ) return null;
 
 	return {
 		id: room.id,
@@ -359,6 +370,7 @@ export function RoomManager_ListRooms(): Array<{
 	playerCount: number;
 }> {
 	RoomManager_CleanupUnhealthyRooms();
+	const now = Date.now();
 
 	const rooms: Array<{
 		id: string;
@@ -370,6 +382,10 @@ export function RoomManager_ListRooms(): Array<{
 	}> = [];
 
 	for ( const room of roomProcesses.values() ) {
+		if ( isRoomResponsive( room, now ) === false ) {
+			continue;
+		}
+
 		rooms.push( {
 			id: room.id,
 			name: room.hostName + "'s Game",
